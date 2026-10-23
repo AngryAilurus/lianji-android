@@ -1,0 +1,17 @@
+.gradle/
+**/build/
+dist/
+local.properties
+signing.jks
+*.apk
+*.idsig
+.idea/
+*.iml
+.DS_Store
+outputs/
+
+# Personal training files and private backups must stay local.
+app/src/androidTest/assets/personal-plan-fixture.json
+app/src/androidTest/assets/current-plan.xlsx
+*.jks
+*.keystore
