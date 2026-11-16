@@ -1,16 +1,63 @@
 package cn.lianji.training;
 
 import org.json.*;
+import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.util.*;
 
 /** Plan mutations never discard recorded sets. Archived items remain in history/backups. */
 public final class PlanOps {
+    static final String STARTED_AT = "startedAt";
+    static final String ENDED_AT = "endedAt";
+
     private PlanOps(){}
+    static List<JSONObject> sessionsInWeek(List<JSONObject> sessions, LocalDate date) {
+        LocalDate monday = date.with(DayOfWeek.MONDAY);
+        String start = monday.toString();
+        String end = monday.plusDays(7).toString();
+        List<JSONObject> result = new ArrayList<>();
+        for (JSONObject session : sessions) {
+            String plannedDate = s(session, "date");
+            if (!session.optBoolean("archived") && plannedDate.compareTo(start) >= 0 && plannedDate.compareTo(end) < 0) {
+                result.add(session);
+            }
+        }
+        return result;
+    }
+
     static String s(JSONObject o,String key){return Store.str(o,key);}
     public static JSONObject blankSet()throws JSONException{return new JSONObject().put("weight","").put("quantity","").put("rir","").put("done",false);}
     public static boolean recorded(JSONObject set){return set.optBoolean("done")||!s(set,"weight").isEmpty()||!s(set,"quantity").isEmpty()||!s(set,"rir").isEmpty();}
     public static boolean hasActual(JSONObject e){JSONArray a=e.optJSONArray("actual");if(a!=null)for(int i=0;i<a.length();i++)if(recorded(a.optJSONObject(i)))return true;return false;}
+    static boolean hasRecords(JSONObject session) {
+        if (session.optLong(STARTED_AT) > 0) return true;
+        JSONArray exercises = session.optJSONArray("exercises");
+        if (exercises != null) {
+            for (int i = 0; i < exercises.length(); i++) {
+                if (hasActual(exercises.optJSONObject(i))) return true;
+            }
+        }
+        JSONObject swim = session.optJSONObject("swim");
+        for (String field : new String[]{"minutes", "distance", "rpe", "sleep", "note"}) {
+            if (!s(swim, field).isEmpty()) return true;
+        }
+        return false;
+    }
+    static boolean startWorkout(JSONObject session, long now) throws JSONException {
+        if (session.optBoolean("archived") || session.optLong(STARTED_AT) > 0
+                || completesSession(session, -1, -1)) return false;
+        session.put(STARTED_AT, now);
+        return true;
+    }
+
+    static boolean updateWorkoutCompletion(JSONObject session, boolean wasComplete, long now) throws JSONException {
+        boolean complete = completesSession(session, -1, -1);
+        if (complete && !wasComplete && session.optLong(STARTED_AT) > 0) {
+            session.put(ENDED_AT, now);
+        }
+        return complete;
+    }
+
     /** Whether all active sets will be done after saving the selected set; -1 checks current state. */
     public static boolean completesSession(JSONObject session,int exerciseIndex,int setIndex){
         JSONArray es=session.optJSONArray("exercises");if(es==null)return false;boolean any=false,selected=exerciseIndex<0;
@@ -54,6 +101,8 @@ public final class PlanOps {
     }
     public static JSONObject copy(JSONObject old,int id,String date)throws Exception{
         LocalDate.parse(date);JSONObject out=Store.cloneJson(old);out.put("id",id).put("date",date).put("updatedAt",0).put("archived",false);
+        out.remove(STARTED_AT);
+        out.remove(ENDED_AT);
         JSONArray es=new JSONArray(),source=old.getJSONArray("exercises");for(int i=0;i<source.length();i++)if(!source.getJSONObject(i).optBoolean("archived"))es.put(newExercise(source.getJSONObject(i)));out.put("exercises",es);
         out.put("swim",new JSONObject().put("planned",s(old.optJSONObject("swim"),"planned")));return out;
     }

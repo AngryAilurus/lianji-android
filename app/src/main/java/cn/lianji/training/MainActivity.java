@@ -18,12 +18,16 @@ import java.time.format.*;
 import java.util.*;
 
 public class MainActivity extends Activity {
-    static final int BG=Color.rgb(229,231,235),INK=Color.rgb(24,35,53),MUTED=Color.rgb(100,113,132),GREEN=Color.rgb(38,86,216),PALE=Color.rgb(226,234,252),LINE=Color.rgb(213,221,232),YELLOW=Color.rgb(100,113,132),WHITE=Color.WHITE,SURFACE=Color.rgb(255,255,255),HERO=Color.rgb(255,255,255);
-    Store store;PlannerUi planner;AppUpdates updates;LinearLayout shell,content,nav;ScrollView scroll;TextView timerView;String page="训练",filter="周1";int currentId=-1;boolean historyMode=false;
+    static final int BG=Color.rgb(229,231,235),INK=Color.rgb(24,35,53),MUTED=Color.rgb(100,113,132),GREEN=Color.rgb(38,86,216),PALE=Color.rgb(226,234,252),LINE=Color.rgb(213,221,232),WHITE=Color.WHITE,SURFACE=Color.rgb(255,255,255);
+    private static final DateTimeFormatter WORKOUT_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.ROOT);
+    private static final int CURRENT_PLAN_WEEK = -2;
+    private static final int ALL_PLAN_WEEKS = -1;
+    Store store;PlannerUi planner;AppUpdates updates;LinearLayout shell,content,nav;ScrollView scroll;TextView timerView;String page="训练";int currentId=-1;boolean historyMode=false;
+    int planWeek = CURRENT_PLAN_WEEK;
     final Handler handler=new Handler();long timerEnd=0;String exportText="";Dialog setDialog,completionDialog;
     final Runnable tick=new Runnable(){public void run(){timerEnd=getPreferences(0).getLong("timerEnd",0);long seconds=Math.max(0,(timerEnd-System.currentTimeMillis()+999)/1000);if(timerView!=null){timerView.setVisibility(timerEnd>0?View.VISIBLE:View.GONE);timerView.setText(seconds>0?"◷  休息 "+(seconds/60)+":"+String.format(Locale.ROOT,"%02d",seconds%60)+"    点击结束":"✓  休息结束，可以开始下一组");}if(timerEnd>0&&seconds==0){timerEnd=0;getPreferences(0).edit().remove("timerEnd").apply();}handler.postDelayed(this,500);}};
-    @Override public void onCreate(Bundle state){super.onCreate(state);try{store=new Store(this);store.seed();planner=new PlannerUi(this);timerEnd=getPreferences(0).getLong("timerEnd",0);if(getIntent().hasExtra("timerSession"))currentId=getIntent().getIntExtra("timerSession",-1);if(state!=null){page=state.getString("page","训练");currentId=state.getInt("session",-1);}build();handler.post(tick);updates=new AppUpdates(this);updates.automatic();}catch(Exception e){new AlertDialog.Builder(this).setTitle("暂时无法打开记录").setMessage("为保护数据，未重置任何记录。\n"+e.getMessage()).setPositiveButton("关闭",(d,w)->finish()).setCancelable(false).show();}}
-    @Override protected void onSaveInstanceState(Bundle state){super.onSaveInstanceState(state);state.putString("page",page);state.putInt("session",currentId);}
+    @Override public void onCreate(Bundle state){super.onCreate(state);try{store=new Store(this);store.seed();planner=new PlannerUi(this);timerEnd=getPreferences(0).getLong("timerEnd",0);if(getIntent().hasExtra("timerSession"))currentId=getIntent().getIntExtra("timerSession",-1);if(state!=null){page=state.getString("page","训练");currentId=state.getInt("session",-1);planWeek=state.getInt("planWeek",CURRENT_PLAN_WEEK);}build();handler.post(tick);updates=new AppUpdates(this);updates.automatic();}catch(Exception e){new AlertDialog.Builder(this).setTitle("暂时无法打开记录").setMessage("为保护数据，未重置任何记录。\n"+e.getMessage()).setPositiveButton("关闭",(d,w)->finish()).setCancelable(false).show();}}
+    @Override protected void onSaveInstanceState(Bundle state){super.onSaveInstanceState(state);state.putString("page",page);state.putInt("session",currentId);state.putInt("planWeek",planWeek);}
     @Override protected void onDestroy(){handler.removeCallbacks(tick);if(updates!=null)updates.close();if(setDialog!=null)setDialog.dismiss();if(completionDialog!=null)completionDialog.dismiss();if(planner!=null)planner.close();if(store!=null)store.close();super.onDestroy();}
     @Override protected void onResume(){super.onResume();if(updates!=null)updates.resume();}
     int dp(float n){return (int)(n*getResources().getDisplayMetrics().density+.5f);}
@@ -43,7 +47,6 @@ public class MainActivity extends Activity {
     String today(){return LocalDate.now().toString();}
     String dateLabel(String date){try{return LocalDate.parse(date).format(DateTimeFormatter.ofPattern("M月d日 EEEE",Locale.SIMPLIFIED_CHINESE));}catch(Exception e){return date;}}
     int[] progress(JSONObject session){int done=0,total=0;JSONArray es=exercises(session);if(es==null)return new int[]{0,0};for(int i=0;i<es.length();i++){if(es.optJSONObject(i).optBoolean("archived"))continue;JSONArray sets=es.optJSONObject(i).optJSONArray("actual");for(int j=0;j<sets.length();j++){total++;if(sets.optJSONObject(j).optBoolean("done"))done++;}}return new int[]{done,total};}
-    boolean hasRecords(JSONObject session){JSONArray es=exercises(session);for(int i=0;i<es.length();i++)if(PlanOps.hasActual(es.optJSONObject(i)))return true;return false;}
     boolean complete(JSONObject session){return PlanOps.completesSession(session,-1,-1);}
     void build(){
         shell=vertical();shell.setBackgroundColor(BG);shell.setOnApplyWindowInsetsListener((v,insets)->{shell.setPadding(insets.getSystemWindowInsetLeft(),insets.getSystemWindowInsetTop(),insets.getSystemWindowInsetRight(),insets.getSystemWindowInsetBottom());return insets;});
@@ -51,50 +54,223 @@ public class MainActivity extends Activity {
         LinearLayout top=horizontal();top.setPadding(dp(22),dp(12),dp(22),dp(10));TextView brand=text("练记",22,INK,true);top.addView(brand,new LinearLayout.LayoutParams(0,-2,1));TextView update=text("更新",12,GREEN,true);update.setPadding(dp(10),dp(12),dp(10),dp(12));update.setOnClickListener(v->{if(updates!=null)updates.check(true);});add(top,update);TextView data=text("备份与导出 ↗",12,GREEN,true);data.setPadding(dp(10),dp(12),0,dp(12));data.setOnClickListener(v->dataMenu());add(top,data);add(shell,top);
         timerView=text("",13,GREEN,true);timerView.setGravity(Gravity.CENTER);timerView.setPadding(dp(12),dp(10),dp(12),dp(10));timerView.setBackgroundColor(PALE);timerView.setVisibility(View.GONE);timerView.setOnClickListener(v->stopTimer());add(shell,timerView);
         scroll=new ScrollView(this);scroll.setFillViewport(true);scroll.setClipToPadding(false);content=vertical();content.setPadding(dp(22),dp(16),dp(22),dp(24));scroll.addView(content);shell.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
-        nav=horizontal();nav.setPadding(dp(12),dp(6),dp(12),dp(8));nav.setBackgroundColor(SURFACE);for(String item:new String[]{"训练","计划","记录","身体"}){TextView t=text(item,14,item.equals(page)?GREEN:MUTED,item.equals(page));t.setGravity(Gravity.CENTER);t.setPadding(0,dp(16),0,dp(16));if(item.equals(page))t.setBackground(bg(PALE,13));nav.addView(t,new LinearLayout.LayoutParams(0,-2,1));t.setOnClickListener(v->{page=item;currentId=-1;build();});}add(shell,nav);
+        nav=horizontal();nav.setPadding(dp(12),dp(6),dp(12),dp(8));nav.setBackgroundColor(SURFACE);for(String item:new String[]{"训练","计划","记录","身体"}){TextView t=text(item,14,item.equals(page)?GREEN:MUTED,item.equals(page));t.setGravity(Gravity.CENTER);t.setPadding(0,dp(16),0,dp(16));if(item.equals(page))t.setBackground(bg(PALE,13));nav.addView(t,new LinearLayout.LayoutParams(0,-2,1));t.setOnClickListener(v->{if(item.equals("计划"))planWeek=CURRENT_PLAN_WEEK;page=item;currentId=-1;build();});}add(shell,nav);
         if(currentId!=-1)showWorkout();else if(page.equals("训练"))home();else if(page.equals("计划"))plan();else if(page.equals("记录"))history();else body();
     }
     void home(){
-        smallTitle("把每一组，记下来。",dateLabel(today()));
-        List<JSONObject> all=store.list("session");JSONObject current=null,next=null,last=null;
-        for(JSONObject x:all){if(!x.optBoolean("archived")){if(s(x,"date").equals(today()))current=x;if(s(x,"date").compareTo(today())>0&&next==null)next=x;}if(hasRecords(x))last=x;}
-        JSONObject featured=current!=null?current:next;
-        LinearLayout hero=card(content);hero.setBackground(bg(HERO,18));
-        add(hero,text(all.isEmpty()?"从第一组开始":current==null?"今天休息  /  下一次训练":"今天的训练",12,YELLOW,true));gap(hero,13);
-        if(featured!=null){
-            add(hero,text(s(featured,"name"),30,INK,true));gap(hero,8);add(hero,text(dateLabel(s(featured,"date"))+"  ·  第"+featured.optInt("week")+"周",13,MUTED,false));gap(hero,20);
-            int[] p=progress(featured);add(hero,text(PlanOps.activeCount(featured)+" 个动作    "+p[0]+" / "+p[1]+" 组已记录",14,INK,false));gap(hero,20);
-            int id=featured.optInt("id");add(hero,action(current==null?"查看下一次训练 →":complete(featured)?"查看今日记录 →":p[0]>0?"继续训练 →":"开始记录 →",true,()->openSession(id)));
-        }else if(all.isEmpty()){add(hero,text("添加你的训练计划",28,INK,true));gap(hero,14);add(hero,text("从Excel导入计划，或新建一次训练。",14,MUTED,false));gap(hero,20);add(hero,action("导入Excel计划 →",true,()->planner.pickExcel()));
-        }else{add(hero,text("计划已结束",28,INK,true));gap(hero,14);add(hero,text("历史记录一直保留，可在计划页导入后续训练。",14,INK,false));}
-        add(content,action("＋ 体重 / 腰围",false,()->metricDialog(today())));gap(content,24);
-        if(last!=null){label(content,"最近一次记录");sessionCard(content,last,true);}
-        LinearLayout info=card(content);add(info,text("少填一点，练得专心一点。",15,INK,true));gap(info,8);add(info,text("上一组自动带入，完成后可选择休息计时。重量支持“空杆”，距离支持“1来回”。所有记录仅保存在这台手机。",13,MUTED,false));
-        add(content,text("计划由你创建或导入，训练记录仅保存在本机。\n建议定期导出完整备份，卸载App会清除本机数据。",12,MUTED,false));
+        String date = today();
+        smallTitle("训练", dateLabel(date));
+        List<JSONObject> sessions = store.list("session");
+        List<JSONObject> upcoming = new ArrayList<>();
+        String upcomingDate = null;
+        JSONObject last = null;
+        for (JSONObject session : sessions) {
+            if (PlanOps.hasRecords(session)) last = session;
+            String plannedDate = s(session, "date");
+            if (session.optBoolean("archived") || plannedDate.compareTo(date) < 0) continue;
+            if (upcomingDate == null) upcomingDate = plannedDate;
+            if (upcomingDate.equals(plannedDate)) upcoming.add(session);
+        }
+        if (upcoming.isEmpty()) {
+            LinearLayout empty = card(content);
+            add(empty, text(sessions.isEmpty() ? "添加训练计划" : "暂无接下来的训练", 20, INK, true));
+            gap(empty, 14);
+            add(empty, action("＋ 新建训练", true, planner::createSession));
+            gap(empty, 8);
+            add(empty, action("导入Excel计划", false, planner::pickExcel));
+        } else {
+            boolean today = date.equals(upcomingDate);
+            label(content, today ? "今天的训练" : "下一训练日 · " + dateLabel(upcomingDate));
+            for (JSONObject session : upcoming) {
+                LinearLayout workout = card(content);
+                add(workout, text(s(session, "name"), 22, INK, true));
+                gap(workout, 8);
+                int[] p = progress(session);
+                String plannedSwim = s(session.optJSONObject("swim"), "planned");
+                List<String> details = new ArrayList<>();
+                if (p[1] > 0) details.add(p[0] + " / " + p[1] + " 组已完成");
+                if (!plannedSwim.isEmpty()) details.add("计划游泳 " + plannedSwim + " 分钟");
+                if (!details.isEmpty()) {
+                    add(workout, text(TextUtils.join(" · ", details), 14, MUTED, false));
+                    gap(workout, 12);
+                }
+                int id = session.optInt("id");
+                if (!today) {
+                    add(workout, action("查看训练", true, () -> openSession(id)));
+                } else if (complete(session)) {
+                    add(workout, action("查看今日记录", true, () -> openSession(id)));
+                } else if (session.optLong(PlanOps.STARTED_AT) > 0) {
+                    add(workout, action("继续训练", true, () -> openSession(id)));
+                } else {
+                    add(workout, action("开始训练", true, () -> startWorkout(id)));
+                }
+            }
+        }
+        add(content, action("＋ 体重 / 腰围", false, () -> metricDialog(date)));
+        if (last != null) {
+            gap(content, 24);
+            label(content, "最近一次记录");
+            sessionCard(content, last, false);
+        }
     }
-    void sessionCard(LinearLayout parent,JSONObject x,boolean compact){LinearLayout c=card(parent);LinearLayout row=horizontal();TextView title=text(s(x,"name"),17,INK,true);row.addView(title,new LinearLayout.LayoutParams(0,-2,1));int[] p=progress(x);add(row,text(complete(x)?"已完成":hasRecords(x)?"已记 "+p[0]+" 组":"待记录",12,hasRecords(x)?GREEN:MUTED,true));add(c,row);gap(c,7);add(c,text(dateLabel(s(x,"date"))+(x.optInt("week")>0?" · 第"+x.optInt("week")+"周":""),12,MUTED,false));if(!compact){gap(c,8);add(c,text(PlanOps.activeCount(x)+" 个动作 · "+p[1]+" 组 · 游泳 "+s(x.optJSONObject("swim"),"planned")+" 分钟",12,MUTED,false));}int id=x.optInt("id");c.setOnClickListener(v->openSession(id));if(!compact&&page.equals("计划")){gap(c,13);add(c,action("编辑这次计划",false,()->planner.sessionMenu(id)));}if(x.optBoolean("archived")){gap(c,7);add(c,text("已移出计划 · 历史记录保留",12,MUTED,false));}}
+    void sessionCard(LinearLayout parent, JSONObject session, boolean inPlan) {
+        LinearLayout card = card(parent);
+        LinearLayout row = horizontal();
+        TextView title = text(s(session, "name"), 17, INK, true);
+        row.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
+        int[] p = progress(session);
+        boolean recorded = PlanOps.hasRecords(session);
+        String status = complete(session) ? "已完成" : p[0] > 0 ? "已完成 " + p[0] + " 组"
+            : session.optLong(PlanOps.STARTED_AT) > 0 ? "已开始" : recorded ? "有记录" : "待记录";
+        add(row, text(status, 12, recorded ? GREEN : MUTED, true));
+        add(card, row);
+        gap(card, 7);
+        int week = session.optInt("week");
+        add(card, text(dateLabel(s(session, "date")) + (week > 0 ? " · 第" + week + "周" : ""), 12, MUTED, false));
+        JSONObject swim = session.optJSONObject("swim");
+        String plannedSwim = s(swim, "planned");
+        String actualSwim = swimSummary(swim);
+        if (inPlan) {
+            gap(card, 8);
+            String plan = PlanOps.activeCount(session) + " 个动作 · " + p[1] + " 组";
+            if (!plannedSwim.isEmpty()) plan += " · 计划游泳 " + plannedSwim + " 分钟";
+            add(card, text(plan, 12, MUTED, false));
+        } else {
+            addWorkoutTimes(card, session);
+            if (!actualSwim.isEmpty()) {
+                gap(card, 8);
+                add(card, text(actualSwim, 12, MUTED, false));
+            }
+        }
+        int id = session.optInt("id");
+        card.setOnClickListener(v -> openSession(id));
+        if (inPlan) {
+            gap(card, 13);
+            add(card, action("编辑这次计划", false, () -> planner.sessionMenu(id)));
+        }
+        if (session.optBoolean("archived")) {
+            gap(card, 7);
+            add(card, text("已移出计划 · 历史记录保留", 12, MUTED, false));
+        }
+    }
+    void addWorkoutTimes(LinearLayout parent, JSONObject session) {
+        long startedAt = session.optLong(PlanOps.STARTED_AT);
+        long endedAt = session.optLong(PlanOps.ENDED_AT);
+        ZoneId zone = ZoneId.systemDefault();
+        if (startedAt > 0) {
+            gap(parent, 7);
+            add(parent, text("开始  " + WORKOUT_TIME.format(Instant.ofEpochMilli(startedAt).atZone(zone)), 13, MUTED, false));
+        }
+        if (endedAt > 0) {
+            gap(parent, 7);
+            add(parent, text("结束  " + WORKOUT_TIME.format(Instant.ofEpochMilli(endedAt).atZone(zone)), 13, MUTED, false));
+        }
+    }
+    String swimSummary(JSONObject swim) {
+        List<String> details = new ArrayList<>();
+        String minutes = s(swim, "minutes"), distance = s(swim, "distance");
+        String rpe = s(swim, "rpe"), sleep = s(swim, "sleep"), note = s(swim, "note");
+        if (!minutes.isEmpty()) details.add("游泳 " + minutes + " 分钟");
+        if (!distance.isEmpty()) details.add(distance + " 米");
+        if (!rpe.isEmpty()) details.add("RPE " + rpe);
+        if (!sleep.isEmpty()) details.add("睡眠 " + sleep + " 小时");
+        if (!note.isEmpty()) details.add(note);
+        return TextUtils.join(" · ", details);
+    }
     void plan(){smallTitle("你的训练计划","从Excel导入，或直接编辑训练日与动作。");
         LinearLayout actions=horizontal();actions.addView(action("导入Excel",true,()->planner.pickExcel()),new LinearLayout.LayoutParams(0,-2,1));View gutter=new View(this);actions.addView(gutter,new LinearLayout.LayoutParams(dp(10),1));actions.addView(action("＋ 新建训练",false,()->planner.createSession()),new LinearLayout.LayoutParams(0,-2,1));add(content,actions);gap(content,10);add(content,action("导出计划 / Excel模板",false,()->planner.excelMenu()));gap(content,20);
-        int maxWeek=12;for(JSONObject x:store.list("session"))maxWeek=Math.min(52,Math.max(maxWeek,x.optInt("week")));HorizontalScrollView tabs=new HorizontalScrollView(this);tabs.setHorizontalScrollBarEnabled(false);LinearLayout weeks=horizontal();
-        TextView all=action("全部",filter.equals("全部"),()->{filter="全部";build();});weeks.addView(all);for(int w=1;w<=maxWeek;w++){final int week=w;TextView button=action("第"+w+"周",filter.equals("周"+w),()->{filter="周"+week;build();});LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-2,-2);lp.leftMargin=dp(7);weeks.addView(button,lp);}tabs.addView(weeks);add(content,tabs);gap(content,18);
-        int count=0;for(JSONObject x:store.list("session"))if(!x.optBoolean("archived")&&(filter.equals("全部")||filter.equals("周"+x.optInt("week")))){sessionCard(content,x,false);count++;}
-        if(count==0)add(content,text("本周还没有训练，可新建或从Excel导入。",14,MUTED,false));
+        List<JSONObject> sessions = store.list("session");
+        int maxWeek = 12;
+        for (JSONObject session : sessions) maxWeek = Math.min(52, Math.max(maxWeek, session.optInt("week")));
+        HorizontalScrollView tabs = new HorizontalScrollView(this);
+        tabs.setHorizontalScrollBarEnabled(false);
+        LinearLayout weeks = horizontal();
+        addPlanWeekTab(weeks, "本周", CURRENT_PLAN_WEEK);
+        addPlanWeekTab(weeks, "全部", ALL_PLAN_WEEKS);
+        for (int week = 1; week <= maxWeek; week++) addPlanWeekTab(weeks, "第" + week + "周", week);
+        tabs.addView(weeks);
+        add(content, tabs);
+        int selectedIndex = planWeek == CURRENT_PLAN_WEEK ? 0 : planWeek == ALL_PLAN_WEEKS ? 1 : planWeek + 1;
+        View selectedTab = weeks.getChildAt(selectedIndex);
+        if (selectedIndex > 0 && selectedTab != null) {
+            tabs.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
+                @Override public void onLayoutChange(View view, int left, int top, int right, int bottom,
+                        int oldLeft, int oldTop, int oldRight, int oldBottom) {
+                    tabs.removeOnLayoutChangeListener(this);
+                    tabs.scrollTo(selectedTab.getLeft() - dp(7), 0);
+                }
+            });
+        }
+        gap(content, 18);
+        List<JSONObject> visible = planWeek == CURRENT_PLAN_WEEK
+            ? PlanOps.sessionsInWeek(sessions, LocalDate.now()) : sessions;
+        int count = 0;
+        for (JSONObject session : visible) {
+            if (session.optBoolean("archived") || (planWeek >= 0 && session.optInt("week") != planWeek)) continue;
+            sessionCard(content, session, true);
+            count++;
+        }
+        if(count==0)add(content,text(planWeek == CURRENT_PLAN_WEEK
+            ? "本周还没有训练，可新建或从Excel导入。" : "暂无训练，可新建或从Excel导入。",14,MUTED,false));
         gap(content,10);add(content,text("修改和导入计划不会清空已有记录。已移出的历史动作仍可在原训练中查看和恢复。",12,MUTED,false));
     }
-    void history(){smallTitle("训练留下了痕迹。","完整保留重量、次数、余力和文字记录。");
-        int count=0;List<JSONObject> all=store.list("session");Collections.reverse(all);for(JSONObject x:all)if(hasRecords(x)){sessionCard(content,x,false);count++;}
-        if(count==0){LinearLayout empty=card(content);add(empty,text("第一组，从今天开始。",18,INK,true));gap(empty,8);add(empty,text("保存一组后，这里就会出现训练记录。",13,MUTED,false));}
+    void addPlanWeekTab(LinearLayout weeks, String label, int week) {
+        TextView button = action(label, week == planWeek, () -> {
+            planWeek = week;
+            build();
+        });
+        button.setSelected(week == planWeek);
+        LinearLayout.LayoutParams layout = new LinearLayout.LayoutParams(-2, -2);
+        if (weeks.getChildCount() > 0) layout.leftMargin = dp(7);
+        weeks.addView(button, layout);
+    }
+    void history(){smallTitle("训练记录","");
+        int count=0;List<JSONObject> all=store.list("session");Collections.reverse(all);for(JSONObject x:all)if(PlanOps.hasRecords(x)){sessionCard(content,x,false);count++;}
+        if(count==0){LinearLayout empty=card(content);add(empty,text("暂无记录",18,INK,true));gap(empty,8);add(empty,text("开始训练或保存训练数据后，可在这里查看。",13,MUTED,false));}
         if(!store.list("legacy").isEmpty()){gap(content,12);add(content,action("查看去年Excel历史资料 →",false,this::legacyMenu));}
     }
     void openSession(int id){currentId=id;build();}
+    void startWorkout(int id) {
+        try {
+            JSONObject session = store.get("session", String.valueOf(id));
+            if (session != null && PlanOps.startWorkout(session, System.currentTimeMillis())) {
+                store.saveSession(session);
+            }
+            openSession(id);
+        } catch (Exception ex) {
+            error(ex);
+        }
+    }
     void showWorkout(){JSONObject x=session();if(x==null){currentId=-1;home();return;}
         TextView back=text("‹ 返回"+page,14,GREEN,true);back.setPadding(0,0,0,dp(16));back.setOnClickListener(v->{currentId=-1;build();});add(content,back);
         smallTitle(s(x,"name"),dateLabel(s(x,"date"))+" · "+(x.optInt("week")==1?"恢复期":x.optInt("week")==0?"未分周训练":"第"+x.optInt("week")+"周"));
+        int id = x.optInt("id");
+        if (x.optLong(PlanOps.STARTED_AT) > 0) {
+            addWorkoutTimes(content, x);
+            gap(content, 16);
+        } else if (!x.optBoolean("archived") && !complete(x)) {
+            add(content, action("开始训练", true, () -> startWorkout(id)));
+            gap(content, 8);
+        }
         add(content,action("编辑训练计划",false,()->planner.sessionMenu(x.optInt("id"))));gap(content,16);int[] p=progress(x);LinearLayout summary=horizontal();TextView progress=text(p[0]+" / "+p[1]+" 组已记录",14,GREEN,true);summary.addView(progress,new LinearLayout.LayoutParams(0,-2,1));add(summary,text("点击一组即可填写",12,MUTED,false));add(content,summary);gap(content,10);
         ProgressBar bar=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);bar.setMax(Math.max(1,p[1]));bar.setProgress(p[0]);bar.setProgressTintList(android.content.res.ColorStateList.valueOf(GREEN));content.addView(bar,new LinearLayout.LayoutParams(-1,dp(5)));gap(content,20);
         JSONArray es=exercises(x);for(int i=0;i<es.length();i++)exerciseCard(x,es.optJSONObject(i),i);
         add(content,action("＋ 添加动作",false,()->addExercise(x)));gap(content,22);
-        LinearLayout swim=card(content);add(swim,text("力量后的游泳",18,INK,true));gap(swim,7);JSONObject sw=x.optJSONObject("swim");add(swim,text("计划 "+s(sw,"planned")+" 分钟 · 可分段完成",13,MUTED,false));if(!s(sw,"minutes").isEmpty()){gap(swim,8);add(swim,text("已记 "+s(sw,"minutes")+" 分钟  "+s(sw,"distance")+" 米",15,GREEN,true));}gap(swim,12);add(swim,action("记录游泳与恢复",false,()->swimDialog(x)));
+        LinearLayout swim = card(content);
+        add(swim, text("游泳与恢复", 18, INK, true));
+        JSONObject sw = x.optJSONObject("swim");
+        String plannedSwim = s(sw, "planned");
+        if (!plannedSwim.isEmpty()) {
+            gap(swim, 7);
+            add(swim, text("计划游泳 " + plannedSwim + " 分钟", 13, MUTED, false));
+        }
+        String actualSwim = swimSummary(sw);
+        if (!actualSwim.isEmpty()) {
+            gap(swim, 8);
+            add(swim, text(actualSwim, 15, GREEN, true));
+        }
+        gap(swim, 12);
+        add(swim, action("记录游泳与恢复", false, () -> swimDialog(x)));
         add(content,text("记录自动保存在本机。历史日期可补记，计划日期不会自动改变。",12,MUTED,false));
     }
     void exerciseCard(JSONObject session,JSONObject e,int index){
@@ -143,7 +319,20 @@ public class MainActivity extends Activity {
             if(w.matches("-\\d+(\\.\\d+)?")){message.setText("重量不能为负数。");return;}
             if(!r.isEmpty()&&(!r.matches("\\d+")||Integer.parseInt(r)>10)){message.setText("RIR请输入0–10，或留空。");return;}
             int rest;try{rest=restField==null?set.optInt("restSeconds",e.optInt("rest",90)):Integer.parseInt(restField.getText().toString().trim());}catch(NumberFormatException invalid){message.setText("休息时间请输入0–1800秒。");return;}if(rest<0||rest>1800){message.setText("休息时间请输入0–1800秒。");return;}
-            JSONObject fresh=store.get("session",String.valueOf(id));boolean wasComplete=complete(fresh);JSONObject actual=exercises(fresh).getJSONObject(exerciseIndex).getJSONArray("actual").getJSONObject(setIndex);actual.put("weight",w).put("quantity",q).put("rir",r).put("done",true).put("restSeconds",rest).put("updatedAt",System.currentTimeMillis());store.saveSession(fresh);dialog.dismiss();boolean finished=complete(fresh);if(finished)stopTimer();else if(withRest[0]&&rest>0)startTimer(rest);rerender();if(finished&&!wasComplete)showCompletion(fresh);else toast("已保存第"+(setIndex+1)+"组");
+            JSONObject fresh = store.get("session", String.valueOf(id));
+            boolean wasComplete = complete(fresh);
+            JSONObject actual = exercises(fresh).getJSONObject(exerciseIndex).getJSONArray("actual").getJSONObject(setIndex);
+            long now = System.currentTimeMillis();
+            actual.put("weight", w).put("quantity", q).put("rir", r).put("done", true)
+                .put("restSeconds", rest).put("updatedAt", now);
+            boolean finished = PlanOps.updateWorkoutCompletion(fresh, wasComplete, now);
+            store.saveSession(fresh);
+            dialog.dismiss();
+            if (finished) stopTimer();
+            else if (withRest[0] && rest > 0) startTimer(rest);
+            rerender();
+            if (finished && !wasComplete) showCompletion(fresh);
+            else toast("已保存第" + (setIndex + 1) + "组");
         }catch(Exception ex){message.setText("保存失败，原记录未清除："+ex.getMessage());}};
         add(b,action(finishing?(set.optBoolean("done")?"保存修改 ✓":"完成本次训练 ✓"):"完成并开始休息 ◷",true,()->{withRest[0]=!finishing;save.run();}));gap(b,12);
         dialog.setOnShowListener(d->{dialog.getButton(-1).setOnClickListener(v->{withRest[0]=false;save.run();});if(set.optBoolean("done"))dialog.getButton(-3).setOnClickListener(v->{try{persistSet(id,exerciseIndex,setIndex,s(set,"weight"),s(set,"quantity"),s(set,"rir"),false);dialog.dismiss();rerender();}catch(Exception ex){error(ex);}});});dialog.show();
@@ -172,7 +361,7 @@ public class MainActivity extends Activity {
     @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);if(intent.hasExtra("timerSession")){currentId=intent.getIntExtra("timerSession",-1);build();}}
 
     void exerciseMenu(JSONObject session,int ei){planner.exerciseMenu(session.optInt("id"),ei);}
-    void addExercise(JSONObject session){planner.exerciseEditor(session.optInt("id"),-1);}
+    void addExercise(JSONObject session){planner.addExercise(session.optInt("id"));}
 
     void swimDialog(JSONObject session){JSONObject sw=session.optJSONObject("swim");LinearLayout b=dialogBody();add(b,text("时间可包含组间休息，不要求连续游。",12,MUTED,false));gap(b,14);EditText minutes=input(b,"游泳分钟",s(sw,"minutes"),"可留空",true),distance=input(b,"距离 米",s(sw,"distance"),"可留空",true),rpe=input(b,"游泳RPE 0–10",s(sw,"rpe"),"可留空",true),sleep=input(b,"睡眠小时",s(sw,"sleep"),"可留空",true),note=input(b,"备注",s(sw,"note"),"疲劳、酸痛或技术练习",false);ScrollView scroll=new ScrollView(this);scroll.addView(b);AlertDialog dialog=new AlertDialog.Builder(this).setTitle("游泳与恢复").setView(scroll).setNegativeButton("取消",null).setPositiveButton("保存",null).create();dialog.setOnShowListener(v->dialog.getButton(-1).setOnClickListener(button->{try{EditText[] fields={minutes,distance,rpe,sleep};double[] max={600,100000,10,24};for(int i=0;i<fields.length;i++){String val=fields[i].getText().toString().trim();if(!val.isEmpty()){double n=Double.parseDouble(val);if(n<0||n>max[i]){fields[i].setError("请检查数值范围");return;}}}JSONObject fresh=store.get("session",String.valueOf(session.optInt("id")));JSONObject value=new JSONObject().put("planned",s(sw,"planned")).put("minutes",minutes.getText().toString().trim()).put("distance",distance.getText().toString().trim()).put("rpe",rpe.getText().toString().trim()).put("sleep",sleep.getText().toString().trim()).put("note",note.getText().toString().trim());fresh.put("swim",value);store.saveSession(fresh);dialog.dismiss();rerender();}catch(Exception ex){toast("请输入有效数字");}}));dialog.show();}
     interface DateChosen{void accept(LocalDate date);}

@@ -20,7 +20,11 @@ android {
         }
     }
     buildTypes {
-        debug { signingConfig signingConfigs.personal }
+        debug {
+            if (signingConfigs.personal.storeFile.isFile()) {
+                signingConfig signingConfigs.personal
+            }
+        }
         release {
             signingConfig signingConfigs.personal
             minifyEnabled false

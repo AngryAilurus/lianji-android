@@ -3,6 +3,7 @@ import android.app.Instrumentation;
 import android.content.Context;
 import org.json.*;
 import java.io.*;
+import java.time.LocalDate;
 import java.util.*;
 
 final class PlanTests {
@@ -11,8 +12,66 @@ final class PlanTests {
     static PlanXlsx.Table read(Context ctx,byte[] bytes)throws Exception{
         File f=file(ctx,bytes);try{List<PlanXlsx.Table> tables=PlanXlsx.read(f);if(tables.size()!=1)throw new AssertionError("expected one synthetic sheet");return tables.get(0);}finally{f.delete();}
     }
+    void testWorkoutTimes() throws Exception {
+        long start = 1_970_000_000_000L;
+        long end = start + 600_000L;
+        JSONObject first = TestFixtures.exercise("first", "合成动作一", 1, 8, 12, "次");
+        JSONObject second = TestFixtures.exercise("second", "合成动作二", 1, 8, 12, "次");
+        JSONObject archived = TestFixtures.exercise("archived", "已移出的动作", 1, 8, 12, "次").put("archived", true);
+        JSONObject session = new JSONObject().put("exercises", new JSONArray().put(first).put(second).put(archived));
+        check(!PlanOps.hasRecords(session), "viewing an unstarted plan does not create a record");
+        check(PlanOps.startWorkout(session, start), "starting a workout records the start time");
+        check(PlanOps.hasRecords(session), "started workouts are visible before the first set");
+        check(!PlanOps.startWorkout(session, start + 1000) && session.getLong(PlanOps.STARTED_AT) == start,
+            "resuming preserves the first start time");
+        JSONObject firstSet = first.getJSONArray("actual").getJSONObject(0);
+        JSONObject secondSet = second.getJSONArray("actual").getJSONObject(0);
+        secondSet.put("done", true);
+        check(!PlanOps.updateWorkoutCompletion(session, false, end - 1000) && !session.has(PlanOps.ENDED_AT),
+            "another unfinished action prevents recording an end time");
+        firstSet.put("done", true);
+        check(PlanOps.updateWorkoutCompletion(session, false, end) && session.getLong(PlanOps.ENDED_AT) == end,
+            "saving the final outstanding set records the end time even when an archived set is unfinished");
+        check(PlanOps.updateWorkoutCompletion(session, true, end + 1000) && session.getLong(PlanOps.ENDED_AT) == end,
+            "editing a completed workout preserves its end time");
+        firstSet.put("done", false);
+        first.getJSONArray("actual").put(PlanOps.blankSet());
+        check(!PlanOps.updateWorkoutCompletion(session, false, end + 2000) && session.getLong(PlanOps.ENDED_AT) == end,
+            "new unfinished sets do not create a new end time");
+        firstSet.put("done", true);
+        first.getJSONArray("actual").getJSONObject(1).put("done", true);
+        check(PlanOps.updateWorkoutCompletion(session, false, end + 3000)
+                && session.getLong(PlanOps.ENDED_AT) == end + 3000
+                && session.getLong(PlanOps.STARTED_AT) == start,
+            "finishing additional sets updates only the end time");
+
+        JSONObject copy = PlanOps.copy(session, 9002, "2032-06-19");
+        check(!copy.has(PlanOps.STARTED_AT) && !copy.has(PlanOps.ENDED_AT),
+            "copying a plan does not inherit workout times");
+        JSONObject oldWorkout = new JSONObject().put("exercises", new JSONArray().put(first).put(second));
+        check(PlanOps.updateWorkoutCompletion(oldWorkout, false, end) && !oldWorkout.has(PlanOps.ENDED_AT),
+            "backfilling a workout without a recorded start does not add a timestamp");
+        check(!PlanOps.startWorkout(oldWorkout, start) && !oldWorkout.has(PlanOps.STARTED_AT),
+            "already completed legacy workouts cannot acquire a new start time");
+    }
+    void testCalendarWeekSelection() throws Exception {
+        JSONObject previous = TestFixtures.session(1, "2032-12-26", "上周");
+        JSONObject monday = TestFixtures.session(2, "2032-12-27", "周一").put("week", 8);
+        JSONObject archived = TestFixtures.session(3, "2032-12-29", "已移出").put("archived", true);
+        JSONObject sunday = TestFixtures.session(4, "2033-01-02", "周日").put("week", 0);
+        JSONObject next = TestFixtures.session(5, "2033-01-03", "下周").put("week", 8);
+        List<JSONObject> sessions = Arrays.asList(previous, monday, archived, sunday, next);
+        check(PlanOps.sessionsInWeek(sessions, LocalDate.parse("2033-01-01")).equals(Arrays.asList(monday, sunday)),
+            "a rest day selects the active Monday-to-Sunday sessions across a year boundary");
+        check(PlanOps.sessionsInWeek(sessions, LocalDate.parse("2033-01-03")).equals(Collections.singletonList(next)),
+            "the selected calendar week advances on Monday");
+        check(PlanOps.sessionsInWeek(sessions, LocalDate.parse("2033-01-10")).isEmpty(),
+            "a week without sessions stays empty");
+    }
     int run(Instrumentation runner)throws Exception{
         Context ctx=runner.getTargetContext();ctx.deleteDatabase("plan-tests.db");Store store=new Store(ctx,"plan-tests.db");try{
+            testWorkoutTimes();
+            testCalendarWeekSelection();
             store.seed();store.merge(TestFixtures.backup());
             PlanXlsx.Table actual=read(ctx,PlanXlsx.write(TestFixtures.sessions(),false));
             check(actual.name.equals("训练计划"),"synthetic workbook sheet detected");
@@ -88,6 +147,15 @@ final class PlanTests {
             check(!PlanOps.completesSession(finish,1,0),"added extra set prevents premature completion");
             check(PlanOps.completesSession(finish,0,2),"out-of-order final outstanding set completes training");
             check(!PlanOps.completesSession(new JSONObject().put("exercises",new JSONArray()),-1,-1),"empty plan is not completed");
+            JSONObject swimPlan = new JSONObject().put("exercises", new JSONArray());
+            check(!PlanOps.hasRecords(swimPlan), "older sessions without a swim object still work");
+            swimPlan.put("swim", new JSONObject().put("planned", "30"));
+            check(!PlanOps.hasRecords(swimPlan), "planned swim minutes do not count as a record");
+            for (String field : new String[]{"minutes", "distance", "rpe", "sleep", "note"}) {
+                swimPlan.put("swim", new JSONObject().put(field, field.equals("note") ? "合成备注" : "0"));
+                check(PlanOps.hasRecords(swimPlan), "standalone swim or recovery field appears in history: " + field);
+            }
+            check(PlanOps.hasRecords(store.get("session", "101")), "strength records still appear in history");
             return checks;
         }finally{store.close();ctx.deleteDatabase("plan-tests.db");}
     }
