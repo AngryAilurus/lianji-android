@@ -45,7 +45,7 @@ final class PlanTests {
         check(!draft.dirty(), "an untouched editor is not dirty");
         draft.details("2032-06-06", "合成草稿改名", "5", "20");
         draft.applyExercise(0, Store.cloneJson(logged).put("sets", 1), false);
-        draft.moveExercise(0, 1);
+        draft.moveExercise(0, 2);
         JSONObject moved = draft.session();
         check(activeExerciseNames(moved).equals(Arrays.asList("合成动作乙", "合成动作甲")),
                 "moving an active exercise skips archived history in one step");
@@ -82,6 +82,30 @@ final class PlanTests {
                         .equals(logged.getJSONArray("actual").getJSONObject(2).toString()),
                 "reducing planned sets keeps the recorded set after a gap");
         check(original.toString().equals(before), "preparing a save payload leaves the original unchanged");
+    }
+
+    void testExerciseDragOrder() throws Exception {
+        JSONObject first = TestFixtures.exercise("drag-first", "动作一", 1, 8, 12, "次");
+        JSONObject history = TestFixtures.exercise("drag-history", "历史动作", 1, 8, 12, "次").put("archived", true);
+        JSONObject second = TestFixtures.exercise("drag-second", "动作二", 1, 8, 12, "次");
+        JSONObject third = TestFixtures.exercise("drag-third", "动作三", 1, 8, 12, "次");
+        first.getJSONArray("actual").put(0, TestFixtures.set("20", "8", "2"));
+        history.getJSONArray("actual").put(0, TestFixtures.set("10", "8", "1"));
+        JSONObject session = TestFixtures.session(7002, "2032-06-05", "合成拖动训练", first, history, second, third);
+
+        PlanOps.reorderExercises(session, 0, 3);
+        check(activeExerciseNames(session).equals(Arrays.asList("动作二", "动作三", "动作一")),
+            "dragging across multiple actions inserts the source and shifts intervening actions");
+        check(exerciseAt(session, 1) == history && exerciseAt(session, 3) == first,
+            "moving actions leaves the archive in place and keeps the recorded exercise object");
+        PlanOps.reorderExercises(session, 3, 0);
+        check(activeExerciseNames(session).equals(Arrays.asList("动作一", "动作二", "动作三")),
+            "dragging a saved action back up restores the original order");
+        String order = session.toString();
+        PlanOps.reorderExercises(session, 0, 0);
+        boolean rejected = false;
+        try { PlanOps.reorderExercises(session, 0, 1); } catch (JSONException expected) { rejected = true; }
+        check(rejected && order.equals(session.toString()), "dropping at the original position or on history leaves the plan intact");
     }
 
     void testPlanEditorFutureSync() throws Exception {
@@ -229,6 +253,7 @@ final class PlanTests {
             testWorkoutTimes();
             testCalendarWeekSelection();
             testPlanEditorDraft();
+            testExerciseDragOrder();
             testPlanEditorFutureSync();
             testPlanEditorValidation();
             store.seed();store.merge(TestFixtures.backup());

@@ -99,6 +99,24 @@ public final class PlanOps {
     public static void move(JSONObject session,int index,int delta)throws JSONException{
         JSONArray es=session.getJSONArray("exercises");int other=index+delta;if(other<0||other>=es.length())return;Object a=es.get(index),b=es.get(other);es.put(index,b);es.put(other,a);
     }
+    static void reorderExercises(JSONObject session, int from, int to) throws JSONException {
+        JSONArray exercises = session.getJSONArray("exercises");
+        if (exercises.getJSONObject(from).optBoolean("archived")
+                || exercises.getJSONObject(to).optBoolean("archived")) {
+            throw new JSONException("只能调整计划中的动作顺序");
+        }
+        if (from == to) return;
+        List<Integer> slots = new ArrayList<>();
+        List<JSONObject> actions = new ArrayList<>();
+        for (int i = Math.min(from, to); i <= Math.max(from, to); i++) {
+            JSONObject exercise = exercises.getJSONObject(i);
+            if (exercise.optBoolean("archived")) continue;
+            slots.add(i);
+            actions.add(exercise);
+        }
+        Collections.rotate(actions, from < to ? -1 : 1);
+        for (int i = 0; i < slots.size(); i++) exercises.put(slots.get(i), actions.get(i));
+    }
     public static JSONObject copy(JSONObject old,int id,String date)throws Exception{
         LocalDate.parse(date);JSONObject out=Store.cloneJson(old);out.put("id",id).put("date",date).put("updatedAt",0).put("archived",false);
         out.remove(STARTED_AT);

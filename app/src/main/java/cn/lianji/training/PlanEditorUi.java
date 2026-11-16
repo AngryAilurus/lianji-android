@@ -168,16 +168,19 @@ final class PlanEditorUi {
         listTitle.setAccessibilityHeading(true);
         LinearLayout listLabel = a.vertical();
         a.add(listLabel, listTitle);
-        a.add(listLabel, a.text(PlanOps.activeCount(x) + " 个动作", 13, MUTED, false));
+        int activeCount = PlanOps.activeCount(x);
+        a.add(listLabel, a.text(activeCount > 1 ? "拖动 ☰ 调整顺序" : activeCount + " 个动作", 13, MUTED, false));
         header.addView(listLabel, new LinearLayout.LayoutParams(0, -2, 1));
         a.add(header, a.action("＋ 添加动作", false, () -> openAction(-1)));
         a.add(a.content, header);
         a.gap(a.content, 10);
         JSONArray exercises = x.optJSONArray("exercises");
+        ExerciseReorder reorder = activeCount > 1
+            ? new ExerciseReorder(a, (from, to) -> mutate(() -> draft.moveExercise(from, to))) : null;
         int count = 0;
         for (int i = 0; i < exercises.length(); i++) {
             JSONObject e = exercises.optJSONObject(i);
-            if (!e.optBoolean("archived")) actionCard(exercises, i, ++count);
+            if (!e.optBoolean("archived")) actionCard(e, i, ++count, reorder);
         }
         if (count == 0) {
             LinearLayout empty = a.card(a.content);
@@ -229,10 +232,10 @@ final class PlanEditorUi {
         });
     }
 
-    private void actionCard(JSONArray exercises, int index, int number) {
-        JSONObject e = exercises.optJSONObject(index);
+    private void actionCard(JSONObject e, int index, int number, ExerciseReorder reorder) {
         LinearLayout card = a.card(a.content);
         LinearLayout row = a.horizontal();
+        if (reorder != null) reorder.addHandle(row, card, index, s(e, "name"));
         TextView name = a.text(String.format(java.util.Locale.ROOT, "%02d  %s", number, s(e, "name")), 17, INK, true);
         row.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
         TextView edit = a.action("编辑", false, () -> openAction(index));
@@ -250,19 +253,10 @@ final class PlanEditorUi {
         }
         a.gap(card, 8);
         LinearLayout controls = a.horizontal();
-        compact(controls, "上移", GREEN, () -> mutate(() -> draft.moveExercise(index, -1)),
-            hasNeighbour(exercises, index, -1), s(e, "name"));
-        compact(controls, "下移", GREEN, () -> mutate(() -> draft.moveExercise(index, 1)),
-            hasNeighbour(exercises, index, 1), s(e, "name"));
-        compact(controls, "移除", REMOVE, () -> mutate(() -> draft.removeExercise(index)), true, s(e, "name"));
+        TextView remove = button("移除", REMOVE, () -> mutate(() -> draft.removeExercise(index)));
+        remove.setContentDescription("移除 " + s(e, "name"));
+        a.add(controls, remove);
         a.add(card, controls);
-    }
-
-    private boolean hasNeighbour(JSONArray exercises, int index, int dir) {
-        for (int j = index + dir; j >= 0 && j < exercises.length(); j += dir) {
-            if (!exercises.optJSONObject(j).optBoolean("archived")) return true;
-        }
-        return false;
     }
 
     void openAction(int index) {
@@ -465,16 +459,6 @@ final class PlanEditorUi {
         b.setTextColor(color);
         if (color == REMOVE) b.setBackground(a.bg(0xffffefef,14));
         return b;
-    }
-
-    private void compact(LinearLayout row,String title,int color,Runnable click,boolean enabled,String name) {
-        TextView b = button(title,color,click);
-        b.setContentDescription(title+" "+name);
-        b.setEnabled(enabled);
-        if (!enabled) b.setAlpha(.45f);
-        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0,-2,1);
-        if (row.getChildCount() > 0) p.leftMargin = a.dp(6);
-        row.addView(b,p);
     }
 
     private LinearLayout column(LinearLayout row,boolean right) {

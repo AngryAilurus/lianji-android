@@ -125,17 +125,8 @@ final class PlanEditorDraft {
         if (sync) future.add(id);
     }
 
-    void moveExercise(int index, int direction) throws Exception {
-        activeExercise(index);
-        int step = Integer.signum(direction);
-        if (step == 0) return;
-        JSONArray actions = exercises(draft);
-        for (int i = index + step; i >= 0 && i < actions.length(); i += step) {
-            if (!actions.getJSONObject(i).optBoolean("archived")) {
-                PlanOps.move(draft, index, i - index);
-                return;
-            }
-        }
+    void moveExercise(int from, int to) throws JSONException {
+        PlanOps.reorderExercises(draft, from, to);
     }
 
     void removeExercise(int index) throws Exception {

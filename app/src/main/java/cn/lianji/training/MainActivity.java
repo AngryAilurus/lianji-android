@@ -326,7 +326,14 @@ public class MainActivity extends Activity {
         }
         add(content,action("编辑训练计划",false,()->planner.editPlan(x.optInt("id"))));gap(content,16);int[] p=progress(x);LinearLayout summary=horizontal();TextView progress=text(p[0]+" / "+p[1]+" 组已记录",14,GREEN,true);summary.addView(progress,new LinearLayout.LayoutParams(0,-2,1));add(summary,text("点击一组即可填写",12,MUTED,false));add(content,summary);gap(content,10);
         ProgressBar bar=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);bar.setMax(Math.max(1,p[1]));bar.setProgress(p[0]);bar.setProgressTintList(android.content.res.ColorStateList.valueOf(GREEN));content.addView(bar,new LinearLayout.LayoutParams(-1,dp(5)));gap(content,20);
-        JSONArray es=exercises(x);for(int i=0;i<es.length();i++)exerciseCard(x,es.optJSONObject(i),i);
+        ExerciseReorder reorder = !page.equals("记录") && !x.optBoolean("archived") && PlanOps.activeCount(x) > 1
+            ? new ExerciseReorder(this, (from, to) -> reorderWorkout(x, from, to)) : null;
+        if (reorder != null) {
+            add(content, text("拖动 ☰ 调整动作顺序", 12, MUTED, false));
+            gap(content, 8);
+        }
+        JSONArray es = exercises(x);
+        for (int i = 0; i < es.length(); i++) exerciseCard(x, es.optJSONObject(i), i, reorder);
         add(content,action("＋ 添加动作",false,()->addExercise(x)));gap(content,22);
         LinearLayout swim = card(content);
         add(swim, text("游泳与恢复", 18, INK, true));
@@ -345,8 +352,26 @@ public class MainActivity extends Activity {
         add(swim, action("记录游泳与恢复", false, () -> swimDialog(x)));
         add(content,text("记录自动保存在本机。历史日期可补记，计划日期不会自动改变。",12,MUTED,false));
     }
-    void exerciseCard(JSONObject session,JSONObject e,int index){
-        LinearLayout c=card(content);if(e.optBoolean("archived")){add(c,text("历史动作 · 已移出计划",12,MUTED,true));gap(c,8);}LinearLayout header=horizontal();TextView name=text(String.format(Locale.ROOT,"%02d",index+1)+"  "+s(e,"name"),17,INK,true);header.addView(name,new LinearLayout.LayoutParams(0,-2,1));TextView more=text("···",24,MUTED,true);more.setPadding(dp(12),0,0,0);more.setContentDescription(s(e,"name")+"设置");more.setOnClickListener(v->exerciseMenu(session,index));add(header,more);add(c,header);gap(c,7);
+    private void reorderWorkout(JSONObject shown, int from, int to) {
+        try {
+            JSONObject fresh = session();
+            if (fresh == null || !fresh.toString().equals(shown.toString())) {
+                rerender();
+                toast("训练已更新，请重新拖动");
+                return;
+            }
+            PlanOps.reorderExercises(fresh, from, to);
+            store.savePlans(Collections.singletonList(fresh), false);
+            rerender();
+        } catch (Exception ex) {
+            error(ex);
+        }
+    }
+
+    void exerciseCard(JSONObject session,JSONObject e,int index,ExerciseReorder reorder){
+        LinearLayout c=card(content);if(e.optBoolean("archived")){add(c,text("历史动作 · 已移出计划",12,MUTED,true));gap(c,8);}LinearLayout header=horizontal();
+        if (reorder != null && !e.optBoolean("archived")) reorder.addHandle(header, c, index, s(e, "name"));
+        TextView name=text(String.format(Locale.ROOT,"%02d",index+1)+"  "+s(e,"name"),17,INK,true);header.addView(name,new LinearLayout.LayoutParams(0,-2,1));TextView more=text("···",24,MUTED,true);more.setPadding(dp(12),0,0,0);more.setContentDescription(s(e,"name")+"设置");more.setOnClickListener(v->exerciseMenu(session,index));add(header,more);add(c,header);gap(c,7);
         String target=e.optInt("low")+"–"+e.optInt("high")+s(e,"unit")+(s(e,"rir").isEmpty()?"":" · 留 "+s(e,"rir")+" 次余力");add(c,text(target+" · 休息 "+e.optInt("rest")+"秒",12,MUTED,false));
         if(!s(e,"note").isEmpty()){gap(c,6);add(c,text(s(e,"note"),12,MUTED,false));}
         gap(c,13);LinearLayout head=horizontal();for(String label:new String[]{"组","重量 kg",s(e,"unit").equals("米")?"距离":"数量 "+s(e,"unit"),"RIR",""}){TextView t=text(label,11,MUTED,false);t.setGravity(Gravity.CENTER);head.addView(t,new LinearLayout.LayoutParams(0,-2,label.isEmpty()?.5f:label.equals("组")?.5f:1));}add(c,head);gap(c,5);

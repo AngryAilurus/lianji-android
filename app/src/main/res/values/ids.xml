@@ -1,0 +1,4 @@
+<resources>
+    <item type="id" name="move_exercise_up"/>
+    <item type="id" name="move_exercise_down"/>
+</resources>
