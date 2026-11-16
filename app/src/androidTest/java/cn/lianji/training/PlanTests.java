@@ -12,6 +12,162 @@ final class PlanTests {
     static PlanXlsx.Table read(Context ctx,byte[] bytes)throws Exception{
         File f=file(ctx,bytes);try{List<PlanXlsx.Table> tables=PlanXlsx.read(f);if(tables.size()!=1)throw new AssertionError("expected one synthetic sheet");return tables.get(0);}finally{f.delete();}
     }
+
+    private static JSONObject exerciseAt(JSONObject session, int index) throws JSONException {
+        return session.getJSONArray("exercises").getJSONObject(index);
+    }
+
+    private static List<String> activeExerciseNames(JSONObject session) throws JSONException {
+        List<String> names = new ArrayList<>();
+        JSONArray exercises = session.getJSONArray("exercises");
+        for (int i = 0; i < exercises.length(); i++) {
+            JSONObject exercise = exercises.getJSONObject(i);
+            if (!exercise.optBoolean("archived")) names.add(exercise.getString("name"));
+        }
+        return names;
+    }
+
+    void testPlanEditorDraft() throws Exception {
+        JSONObject logged = TestFixtures.exercise("draft-logged", "合成动作甲", 3, 7, 9, "次");
+        JSONObject historical = TestFixtures.exercise("draft-historical", "合成历史动作", 1, 8, 10, "次")
+                .put("archived", true);
+        JSONObject second = TestFixtures.exercise("draft-second", "合成动作乙", 1, 11, 13, "次");
+        logged.getJSONArray("actual").put(2, TestFixtures.set("16.5", "7", "0"));
+        historical.getJSONArray("actual").put(0, TestFixtures.set("9", "8", "1"));
+        long start = 1_970_000_000_000L;
+        long end = start + 600_000L;
+        JSONObject original = TestFixtures.session(7001, "2032-06-05", "合成草稿训练", logged, historical, second)
+                .put(PlanOps.STARTED_AT, start).put(PlanOps.ENDED_AT, end);
+        original.getJSONObject("swim").put("minutes", "11").put("distance", "247").put("note", "合成游泳记录");
+        String before = original.toString();
+        List<JSONObject> saved = Collections.singletonList(original);
+        PlanEditorDraft draft = new PlanEditorDraft(original, "2032-06-04");
+        check(!draft.dirty(), "an untouched editor is not dirty");
+        draft.details("2032-06-06", "合成草稿改名", "5", "20");
+        draft.applyExercise(0, Store.cloneJson(logged).put("sets", 1), false);
+        draft.moveExercise(0, 1);
+        JSONObject moved = draft.session();
+        check(activeExerciseNames(moved).equals(Arrays.asList("合成动作乙", "合成动作甲")),
+                "moving an active exercise skips archived history in one step");
+        JSONArray exercises = moved.getJSONArray("exercises");
+        int loggedIndex = -1;
+        for (int i = 0; i < exercises.length(); i++) {
+            if ("draft-logged".equals(exerciseAt(moved, i).getString("id"))) loggedIndex = i;
+        }
+        check(loggedIndex >= 0, "moving an exercise preserves its identity");
+        draft.removeExercise(loggedIndex);
+        check(exerciseAt(draft.session(), loggedIndex).optBoolean("archived"),
+                "removing a logged exercise keeps it as draft history");
+        draft.restoreExercise(loggedIndex);
+        check(!exerciseAt(draft.session(), loggedIndex).optBoolean("archived"),
+                "restoring a logged exercise keeps the same action and history");
+        check(draft.dirty() && original.toString().equals(before), "draft changes do not mutate the saved session");
+
+        PlanEditorDraft restored = new PlanEditorDraft(draft.state());
+        List<JSONObject> batch = restored.prepare(saved, 8001);
+        check(restored.dirty() && batch.size() == 1, "restoring a draft retains its unsaved status and makes one save payload");
+        JSONObject updated = batch.get(0);
+        check(updated.getInt("id") == 7001 && updated.getString("date").equals("2032-06-06")
+                        && updated.getString("name").equals("合成草稿改名") && updated.getInt("week") == 5,
+                "saving a restored draft retains training details and the existing id");
+        JSONObject updatedSwim = updated.getJSONObject("swim");
+        check(updatedSwim.getString("planned").equals("20") && updatedSwim.getString("minutes").equals("11")
+                        && updatedSwim.getString("distance").equals("247") && updatedSwim.getString("note").equals("合成游泳记录"),
+                "changing planned swim minutes preserves the actual swim record");
+        check(updated.getLong(PlanOps.STARTED_AT) == start && updated.getLong(PlanOps.ENDED_AT) == end,
+                "editing a training plan retains its recorded start and end times");
+        JSONObject updatedLogged = exerciseAt(updated, loggedIndex);
+        check(updatedLogged.getInt("sets") == 1 && updatedLogged.getJSONArray("actual").length() == 3
+                        && updatedLogged.getJSONArray("actual").getJSONObject(2).toString()
+                        .equals(logged.getJSONArray("actual").getJSONObject(2).toString()),
+                "reducing planned sets keeps the recorded set after a gap");
+        check(original.toString().equals(before), "preparing a save payload leaves the original unchanged");
+    }
+
+    void testPlanEditorFutureSync() throws Exception {
+        String planName = "合成同步训练";
+        JSONObject first = TestFixtures.exercise("current-first", "合成同步动作", 2, 7, 9, "次");
+        JSONObject second = TestFixtures.exercise("current-second", "合成本次动作", 1, 11, 13, "次");
+        JSONObject now = TestFixtures.session(7101, "2032-06-05", planName, first, second);
+        JSONObject hiddenExercise = Store.cloneJson(first).put("id", "future-hidden").put("archived", true);
+        JSONObject futureFirst = Store.cloneJson(first).put("id", "future-first");
+        futureFirst.getJSONArray("actual").put(1, TestFixtures.set("18", "8", "0"));
+        JSONObject future = TestFixtures.session(7102, "2032-06-12", planName, hiddenExercise,
+                futureFirst, Store.cloneJson(second).put("id", "future-second"));
+        JSONObject earlier = TestFixtures.session(7103, "2032-05-29", planName, Store.cloneJson(first));
+        JSONObject different = TestFixtures.session(7104, "2032-06-13", "合成其他训练", Store.cloneJson(first));
+        JSONObject archived = TestFixtures.session(7105, "2032-06-19", planName, Store.cloneJson(first))
+                .put("archived", true);
+        List<JSONObject> saved = Arrays.asList(earlier, now, future, different, archived);
+        String savedBefore = saved.toString();
+        PlanEditorDraft draft = new PlanEditorDraft(now, "2032-06-04");
+        draft.applyExercise(0, Store.cloneJson(first).put("rest", 52), true);
+        draft.applyExercise(1, Store.cloneJson(second).put("rest", 64), false);
+        draft.applyExercise(-1, TestFixtures.exercise("add", "合成新增动作", 2, 5, 6, "次"), true);
+        int removedIndex = draft.session().getJSONArray("exercises").length();
+        draft.applyExercise(-1, TestFixtures.exercise("remove", "合成取消动作", 1, 3, 4, "次"), true);
+        draft.removeExercise(removedIndex);
+
+        List<JSONObject> batch = new PlanEditorDraft(draft.state()).prepare(saved, 8001);
+        check(batch.size() == 2 && batch.get(0).getInt("id") == 7101 && batch.get(1).getInt("id") == 7102,
+                "only the selected session and later active sessions with the same name are saved");
+        JSONObject updated = batch.get(0), synced = batch.get(1);
+        check(exerciseAt(updated, 1).getInt("rest") == 64 && exerciseAt(synced, 2).getInt("rest") == 37,
+                "edits without future sync affect only the selected session");
+        check(exerciseAt(synced, 0).getInt("rest") == 37 && exerciseAt(synced, 1).getInt("rest") == 52,
+                "future sync edits the active match and leaves archived history alone");
+        check(exerciseAt(synced, 1).getJSONArray("actual").getJSONObject(1).toString()
+                        .equals(futureFirst.getJSONArray("actual").getJSONObject(1).toString()),
+                "a synced edit preserves sets already recorded in the future session");
+        List<String> expectedNames = Arrays.asList("合成同步动作", "合成本次动作", "合成新增动作");
+        check(activeExerciseNames(updated).equals(expectedNames) && activeExerciseNames(synced).equals(expectedNames)
+                        && !PlanOps.hasActual(exerciseAt(synced, 3)),
+                "a synced addition adds blank sets, and canceling another addition never affects a future session");
+        check(saved.toString().equals(savedBefore), "preparing future edits never mutates their saved inputs");
+    }
+
+    void testPlanEditorValidation() throws Exception {
+        JSONObject first = TestFixtures.exercise("validate-first", "合成验证动作", 1, 7, 9, "次");
+        JSONObject original = TestFixtures.session(7201, "2032-06-05", "合成验证训练", first).put("updatedAt", 10);
+        JSONObject future = TestFixtures.session(7202, "2032-06-12", "合成验证训练", Store.cloneJson(first));
+        List<JSONObject> saved = Arrays.asList(original, future);
+        String before = saved.toString();
+        PlanEditorDraft draft = new PlanEditorDraft(original, "2032-06-04");
+        draft.details("2032-06-12", "合成验证训练", "2", "");
+        draft.applyExercise(0, Store.cloneJson(first).put("rest", 54), true);
+        boolean rejected = false;
+        try { draft.prepare(saved, 8001); } catch (Exception expected) { rejected = true; }
+        check(rejected && draft.dirty() && saved.toString().equals(before),
+                "a duplicate date and name rejects the whole save without discarding or partially saving the draft");
+
+        draft.details("2032-06-31", "合成验证训练", "2", "");
+        rejected = false;
+        try { new PlanEditorDraft(draft.state()).prepare(saved, 8001); } catch (Exception expected) { rejected = true; }
+        check(rejected && saved.toString().equals(before),
+                "an invalid calendar date cannot be saved after restoring the draft");
+
+        draft.details("2032-06-05", "合成验证训练", "2", "");
+        check(draft.prepare(saved, 8001).size() == 2 && saved.toString().equals(before),
+                "correcting a validation error makes the original current and future edits saveable");
+        JSONObject changed = Store.cloneJson(original).put("updatedAt", 11);
+        changed.getJSONObject("swim").put("minutes", "9");
+        List<JSONObject> concurrent = Arrays.asList(changed, future);
+        String concurrentBefore = concurrent.toString();
+        rejected = false;
+        try { new PlanEditorDraft(draft.state()).prepare(concurrent, 8001); } catch (Exception expected) { rejected = true; }
+        check(rejected && concurrent.toString().equals(concurrentBefore),
+                "a restored stale draft cannot overwrite a newer training record or modify future sessions");
+
+        PlanEditorDraft fresh = new PlanEditorDraft(null, "2032-06-04");
+        check(!fresh.dirty() && fresh.session().getInt("id") == -1, "a new plan does not yet have a saved id");
+        fresh.details("2032-06-06", "合成新计划", "3", "12");
+        fresh.applyExercise(-1, first, false);
+        List<JSONObject> added = fresh.prepare(saved, 8001);
+        check(added.size() == 1 && added.get(0).getInt("id") == 8001
+                        && added.get(0).getString("date").equals("2032-06-06") && saved.toString().equals(before),
+                "preparing a new plan allocates its id only in the save payload");
+    }
+
     void testWorkoutTimes() throws Exception {
         long start = 1_970_000_000_000L;
         long end = start + 600_000L;
@@ -72,6 +228,9 @@ final class PlanTests {
         Context ctx=runner.getTargetContext();ctx.deleteDatabase("plan-tests.db");Store store=new Store(ctx,"plan-tests.db");try{
             testWorkoutTimes();
             testCalendarWeekSelection();
+            testPlanEditorDraft();
+            testPlanEditorFutureSync();
+            testPlanEditorValidation();
             store.seed();store.merge(TestFixtures.backup());
             PlanXlsx.Table actual=read(ctx,PlanXlsx.write(TestFixtures.sessions(),false));
             check(actual.name.equals("训练计划"),"synthetic workbook sheet detected");

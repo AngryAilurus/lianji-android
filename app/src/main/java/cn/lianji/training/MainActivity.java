@@ -24,10 +24,12 @@ public class MainActivity extends Activity {
     private static final int ALL_PLAN_WEEKS = -1;
     Store store;PlannerUi planner;AppUpdates updates;LinearLayout shell,content,nav;ScrollView scroll;TextView timerView;String page="训练";int currentId=-1;boolean historyMode=false;
     int planWeek = CURRENT_PLAN_WEEK;
+    private PlanEditorUi planEditor;
+    private String planEditorToken;
     final Handler handler=new Handler();long timerEnd=0;String exportText="";Dialog setDialog,completionDialog;
     final Runnable tick=new Runnable(){public void run(){timerEnd=getPreferences(0).getLong("timerEnd",0);long seconds=Math.max(0,(timerEnd-System.currentTimeMillis()+999)/1000);if(timerView!=null){timerView.setVisibility(timerEnd>0?View.VISIBLE:View.GONE);timerView.setText(seconds>0?"◷  休息 "+(seconds/60)+":"+String.format(Locale.ROOT,"%02d",seconds%60)+"    点击结束":"✓  休息结束，可以开始下一组");}if(timerEnd>0&&seconds==0){timerEnd=0;getPreferences(0).edit().remove("timerEnd").apply();}handler.postDelayed(this,500);}};
-    @Override public void onCreate(Bundle state){super.onCreate(state);try{store=new Store(this);store.seed();planner=new PlannerUi(this);timerEnd=getPreferences(0).getLong("timerEnd",0);if(getIntent().hasExtra("timerSession"))currentId=getIntent().getIntExtra("timerSession",-1);if(state!=null){page=state.getString("page","训练");currentId=state.getInt("session",-1);planWeek=state.getInt("planWeek",CURRENT_PLAN_WEEK);}build();handler.post(tick);updates=new AppUpdates(this);updates.automatic();}catch(Exception e){new AlertDialog.Builder(this).setTitle("暂时无法打开记录").setMessage("为保护数据，未重置任何记录。\n"+e.getMessage()).setPositiveButton("关闭",(d,w)->finish()).setCancelable(false).show();}}
-    @Override protected void onSaveInstanceState(Bundle state){super.onSaveInstanceState(state);state.putString("page",page);state.putInt("session",currentId);state.putInt("planWeek",planWeek);}
+    @Override public void onCreate(Bundle state){super.onCreate(state);try{store=new Store(this);store.seed();planner=new PlannerUi(this);timerEnd=getPreferences(0).getLong("timerEnd",0);if(getIntent().hasExtra("timerSession"))currentId=getIntent().getIntExtra("timerSession",-1);if(state!=null){page=state.getString("page","训练");currentId=state.getInt("session",-1);planWeek=state.getInt("planWeek",CURRENT_PLAN_WEEK);restorePlanEditor(state);}build();handler.post(tick);updates=new AppUpdates(this);updates.automatic();}catch(Exception e){new AlertDialog.Builder(this).setTitle("暂时无法打开记录").setMessage("为保护数据，未重置任何记录。\n"+e.getMessage()).setPositiveButton("关闭",(d,w)->finish()).setCancelable(false).show();}}
+    @Override protected void onSaveInstanceState(Bundle state){super.onSaveInstanceState(state);state.putString("page",page);state.putInt("session",currentId);state.putInt("planWeek",planWeek);savePlanEditorState(state);}
     @Override protected void onDestroy(){handler.removeCallbacks(tick);if(updates!=null)updates.close();if(setDialog!=null)setDialog.dismiss();if(completionDialog!=null)completionDialog.dismiss();if(planner!=null)planner.close();if(store!=null)store.close();super.onDestroy();}
     @Override protected void onResume(){super.onResume();if(updates!=null)updates.resume();}
     int dp(float n){return (int)(n*getResources().getDisplayMetrics().density+.5f);}
@@ -51,12 +53,82 @@ public class MainActivity extends Activity {
     void build(){
         shell=vertical();shell.setBackgroundColor(BG);shell.setOnApplyWindowInsetsListener((v,insets)->{shell.setPadding(insets.getSystemWindowInsetLeft(),insets.getSystemWindowInsetTop(),insets.getSystemWindowInsetRight(),insets.getSystemWindowInsetBottom());return insets;});
         setContentView(shell);getWindow().setStatusBarColor(BG);getWindow().setNavigationBarColor(BG);getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR|View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);shell.requestApplyInsets();
+        if (planEditor != null) { planEditor.render(); return; }
         LinearLayout top=horizontal();top.setPadding(dp(22),dp(12),dp(22),dp(10));TextView brand=text("练记",22,INK,true);top.addView(brand,new LinearLayout.LayoutParams(0,-2,1));TextView update=text("更新",12,GREEN,true);update.setPadding(dp(10),dp(12),dp(10),dp(12));update.setOnClickListener(v->{if(updates!=null)updates.check(true);});add(top,update);TextView data=text("备份与导出 ↗",12,GREEN,true);data.setPadding(dp(10),dp(12),0,dp(12));data.setOnClickListener(v->dataMenu());add(top,data);add(shell,top);
         timerView=text("",13,GREEN,true);timerView.setGravity(Gravity.CENTER);timerView.setPadding(dp(12),dp(10),dp(12),dp(10));timerView.setBackgroundColor(PALE);timerView.setVisibility(View.GONE);timerView.setOnClickListener(v->stopTimer());add(shell,timerView);
         scroll=new ScrollView(this);scroll.setFillViewport(true);scroll.setClipToPadding(false);content=vertical();content.setPadding(dp(22),dp(16),dp(22),dp(24));scroll.addView(content);shell.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
         nav=horizontal();nav.setPadding(dp(12),dp(6),dp(12),dp(8));nav.setBackgroundColor(SURFACE);for(String item:new String[]{"训练","计划","记录","身体"}){TextView t=text(item,14,item.equals(page)?GREEN:MUTED,item.equals(page));t.setGravity(Gravity.CENTER);t.setPadding(0,dp(16),0,dp(16));if(item.equals(page))t.setBackground(bg(PALE,13));nav.addView(t,new LinearLayout.LayoutParams(0,-2,1));t.setOnClickListener(v->{if(item.equals("计划"))planWeek=CURRENT_PLAN_WEEK;page=item;currentId=-1;build();});}add(shell,nav);
         if(currentId!=-1)showWorkout();else if(page.equals("训练"))home();else if(page.equals("计划"))plan();else if(page.equals("记录"))history();else body();
     }
+    void openPlanEditor(JSONObject original) throws Exception {
+        planEditorToken = UUID.randomUUID().toString();
+        planEditor = new PlanEditorUi(this, new PlanEditorDraft(original, today()), null);
+        build();
+    }
+
+    void openPlanAction(JSONObject original, int index) throws Exception {
+        openPlanEditor(original);
+        planEditor.openAction(index);
+    }
+
+    void closePlanEditor(int savedId, boolean changeLocation) {
+        if (planEditor == null) return;
+        int editingId = planEditor.draft.session().optInt("id");
+        int previousScroll = planEditor.originScroll;
+        if (changeLocation) currentId = editingId < 0 ? savedId : -1;
+        clearPlanEditor();
+        build();
+        if (!changeLocation) {
+            ScrollView frame = scroll;
+            frame.post(() -> frame.scrollTo(0, previousScroll));
+        }
+    }
+
+    void openCopiedPlan(int id) {
+        clearPlanEditor();
+        openSession(id);
+    }
+
+    private void clearPlanEditor() {
+        planEditor = null;
+        if (planEditorToken != null) planEditorFile().delete();
+        planEditorToken = null;
+    }
+
+    private android.util.AtomicFile planEditorFile() {
+        return new android.util.AtomicFile(new File(getCacheDir(), "plan-editor-" + planEditorToken));
+    }
+
+    private void savePlanEditorState(Bundle state) {
+        if (planEditor == null) return;
+        android.util.AtomicFile file = planEditorFile();
+        FileOutputStream out = null;
+        try {
+            out = file.startWrite();
+            out.write(planEditor.draft.state().getBytes(StandardCharsets.UTF_8));
+            file.finishWrite(out);
+            state.putString("planEditorToken", planEditorToken);
+            state.putBundle("planEditorView", planEditor.saveViewState());
+        } catch (Exception ex) {
+            if (out != null) file.failWrite(out);
+            android.util.Log.w("PlanEditor", "Unable to preserve editor state", ex);
+        }
+    }
+
+    private void restorePlanEditor(Bundle state) {
+        String token = state.getString("planEditorToken");
+        Bundle view = state.getBundle("planEditorView");
+        if (token == null || !token.matches("[0-9a-f-]{36}") || view == null) return;
+        planEditorToken = token;
+        try {
+            String contents = new String(planEditorFile().readFully(), StandardCharsets.UTF_8);
+            planEditor = new PlanEditorUi(this, new PlanEditorDraft(contents), view);
+        } catch (Exception ex) {
+            clearPlanEditor();
+            toast("未能恢复编辑页面，已保存的计划不受影响。");
+        }
+    }
+
     void home(){
         String date = today();
         smallTitle("训练", dateLabel(date));
@@ -146,7 +218,7 @@ public class MainActivity extends Activity {
         card.setOnClickListener(v -> openSession(id));
         if (inPlan) {
             gap(card, 13);
-            add(card, action("编辑这次计划", false, () -> planner.sessionMenu(id)));
+            add(card, action("编辑这次计划", false, () -> planner.editPlan(id)));
         }
         if (session.optBoolean("archived")) {
             gap(card, 7);
@@ -252,7 +324,7 @@ public class MainActivity extends Activity {
             add(content, action("开始训练", true, () -> startWorkout(id)));
             gap(content, 8);
         }
-        add(content,action("编辑训练计划",false,()->planner.sessionMenu(x.optInt("id"))));gap(content,16);int[] p=progress(x);LinearLayout summary=horizontal();TextView progress=text(p[0]+" / "+p[1]+" 组已记录",14,GREEN,true);summary.addView(progress,new LinearLayout.LayoutParams(0,-2,1));add(summary,text("点击一组即可填写",12,MUTED,false));add(content,summary);gap(content,10);
+        add(content,action("编辑训练计划",false,()->planner.editPlan(x.optInt("id"))));gap(content,16);int[] p=progress(x);LinearLayout summary=horizontal();TextView progress=text(p[0]+" / "+p[1]+" 组已记录",14,GREEN,true);summary.addView(progress,new LinearLayout.LayoutParams(0,-2,1));add(summary,text("点击一组即可填写",12,MUTED,false));add(content,summary);gap(content,10);
         ProgressBar bar=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);bar.setMax(Math.max(1,p[1]));bar.setProgress(p[0]);bar.setProgressTintList(android.content.res.ColorStateList.valueOf(GREEN));content.addView(bar,new LinearLayout.LayoutParams(-1,dp(5)));gap(content,20);
         JSONArray es=exercises(x);for(int i=0;i<es.length();i++)exerciseCard(x,es.optJSONObject(i),i);
         add(content,action("＋ 添加动作",false,()->addExercise(x)));gap(content,22);
@@ -360,7 +432,7 @@ public class MainActivity extends Activity {
     @Override public void onRequestPermissionsResult(int request,String[] permissions,int[] results){super.onRequestPermissionsResult(request,permissions,results);if(request==41){if(results.length>0&&results[0]==android.content.pm.PackageManager.PERMISSION_GRANTED){long end=getPreferences(0).getLong("timerEnd",0);if(end>System.currentTimeMillis())startForegroundService(new Intent(this,RestTimerService.class).putExtra("end",end).putExtra("session",getPreferences(0).getInt("timerSession",-1)));}else toast("通知未开启，可在系统设置中允许练记通知；App内仍可查看计时。");}}
     @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);if(intent.hasExtra("timerSession")){currentId=intent.getIntExtra("timerSession",-1);build();}}
 
-    void exerciseMenu(JSONObject session,int ei){planner.exerciseMenu(session.optInt("id"),ei);}
+    void exerciseMenu(JSONObject session,int ei){planner.editAction(session.optInt("id"),ei);}
     void addExercise(JSONObject session){planner.addExercise(session.optInt("id"));}
 
     void swimDialog(JSONObject session){JSONObject sw=session.optJSONObject("swim");LinearLayout b=dialogBody();add(b,text("时间可包含组间休息，不要求连续游。",12,MUTED,false));gap(b,14);EditText minutes=input(b,"游泳分钟",s(sw,"minutes"),"可留空",true),distance=input(b,"距离 米",s(sw,"distance"),"可留空",true),rpe=input(b,"游泳RPE 0–10",s(sw,"rpe"),"可留空",true),sleep=input(b,"睡眠小时",s(sw,"sleep"),"可留空",true),note=input(b,"备注",s(sw,"note"),"疲劳、酸痛或技术练习",false);ScrollView scroll=new ScrollView(this);scroll.addView(b);AlertDialog dialog=new AlertDialog.Builder(this).setTitle("游泳与恢复").setView(scroll).setNegativeButton("取消",null).setPositiveButton("保存",null).create();dialog.setOnShowListener(v->dialog.getButton(-1).setOnClickListener(button->{try{EditText[] fields={minutes,distance,rpe,sleep};double[] max={600,100000,10,24};for(int i=0;i<fields.length;i++){String val=fields[i].getText().toString().trim();if(!val.isEmpty()){double n=Double.parseDouble(val);if(n<0||n>max[i]){fields[i].setError("请检查数值范围");return;}}}JSONObject fresh=store.get("session",String.valueOf(session.optInt("id")));JSONObject value=new JSONObject().put("planned",s(sw,"planned")).put("minutes",minutes.getText().toString().trim()).put("distance",distance.getText().toString().trim()).put("rpe",rpe.getText().toString().trim()).put("sleep",sleep.getText().toString().trim()).put("note",note.getText().toString().trim());fresh.put("swim",value);store.saveSession(fresh);dialog.dismiss();rerender();}catch(Exception ex){toast("请输入有效数字");}}));dialog.show();}
@@ -392,7 +464,7 @@ public class MainActivity extends Activity {
     @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(result!=RESULT_OK||data==null||data.getData()==null)return;Uri uri=data.getData();if(request==103){planner.read(uri);return;}try{if(request==101){byte[] payload=new android.util.AtomicFile(new File(getFilesDir(),"pending-export")).readFully();if(payload.length==0)throw new IOException("备份内容为空，请重新导出");try(OutputStream out=getContentResolver().openOutputStream(uri)){if(out==null)throw new IOException("无法打开保存位置");out.write(payload);}toast("导出成功，请妥善保存");}else if(request==102){JSONObject backup=new JSONObject(Store.read(getContentResolver().openInputStream(uri),10*1024*1024));Store.validate(backup);new AlertDialog.Builder(this).setTitle("合并备份记录？").setMessage("备份包含 "+backup.getJSONArray("sessions").length()+" 次训练和 "+backup.getJSONArray("metrics").length()+" 条体测。不会清空本机数据；同一训练以最后修改时间较新的版本为准。").setNegativeButton("取消",null).setPositiveButton("合并",(d,w)->{try{int n=store.merge(backup);currentId=-1;build();toast("合并完成，更新 "+n+" 条记录");}catch(Exception ex){error(ex);}}).show();}}catch(Exception ex){error(ex);}}
     void toast(String t){Toast.makeText(this,t,Toast.LENGTH_SHORT).show();}
     void error(Exception e){new AlertDialog.Builder(this).setTitle("操作未完成").setMessage(e.getMessage()==null?e.toString():e.getMessage()).setPositiveButton("知道了",null).show();}
-    @Override public void onBackPressed(){if(currentId!=-1){currentId=-1;build();}else if(!page.equals("训练")){page="训练";build();}else super.onBackPressed();}
+    @Override public void onBackPressed(){if(planEditor!=null){planEditor.back();return;}if(currentId!=-1){currentId=-1;build();}else if(!page.equals("训练")){page="训练";build();}else super.onBackPressed();}
     final class Trend extends View {
         final List<Float> values=new ArrayList<>();final List<String> dates=new ArrayList<>();final List<Long> days=new ArrayList<>();final Paint paint=new Paint(3);
         Trend(Context c,List<JSONObject> metrics){super(c);for(JSONObject m:metrics)try{if(!s(m,"weight").isEmpty()){values.add(Float.parseFloat(s(m,"weight")));dates.add(s(m,"date").substring(5));days.add(LocalDate.parse(s(m,"date")).toEpochDay());}}catch(Exception ignored){}}
