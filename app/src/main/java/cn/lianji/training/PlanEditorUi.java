@@ -2,14 +2,18 @@ package cn.lianji.training;
 
 import android.app.AlertDialog;
 import android.content.Context;
+import android.graphics.Color;
 import android.os.Bundle;
 import android.text.InputType;
+import android.text.TextUtils;
+import android.view.Gravity;
 import android.view.View;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.ArrayAdapter;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.PopupMenu;
 import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.widget.TextView;
@@ -23,41 +27,38 @@ import static cn.lianji.training.MainActivity.*;
 
 final class PlanEditorUi {
     private static final int PLAN = -2;
+    private static final int SETTINGS = -3;
     private static final int REMOVE = 0xffa53333;
     private static final String[] UNITS = {"次", "秒", "米"};
     private static final String[] KEYS = {"name", "sets", "low", "high", "rir", "rest", "load", "note"};
+    private static final String[] SETTING_KEYS = {"date", "name", "week", "swim"};
 
     final MainActivity a;
     final PlanEditorDraft draft;
     final int originScroll;
-    private int selected = PLAN;
+    private int selected;
     private int planScroll;
     private int restoreScroll;
-    private String date;
-    private String name;
-    private String week;
-    private String swim;
     private EditText nameInput, weekInput, swimInput;
     private EditText[] actionInputs;
     private Spinner unitInput;
     private CheckBox syncInput;
     private TextView error;
     private Bundle actionState;
+    private Bundle settingsState;
 
     PlanEditorUi(MainActivity activity, PlanEditorDraft draft, Bundle state) {
         a = activity;
         this.draft = draft;
-        JSONObject x = draft.session();
         originScroll = state == null ? (a.scroll == null ? 0 : a.scroll.getScrollY()) : state.getInt("originScroll");
-        date = state == null ? s(x, "date") : state.getString("date");
-        name = state == null ? s(x, "name") : state.getString("name");
-        week = state == null ? s(x, "week") : state.getString("week");
-        swim = state == null ? s(x.optJSONObject("swim"), "planned") : state.getString("swim");
-        if (state != null) {
+        if (state == null) {
+            selected = draft.session().optInt("id") < 0 ? SETTINGS : PLAN;
+        } else {
             selected = state.getInt("selected", PLAN);
             planScroll = state.getInt("planScroll");
             restoreScroll = state.getInt("scroll");
             actionState = state.getBundle("action");
+            settingsState = state.getBundle("settings");
         }
     }
 
@@ -68,19 +69,16 @@ final class PlanEditorUi {
         out.putInt("planScroll", planScroll);
         out.putInt("scroll", a.scroll.getScrollY());
         out.putInt("selected", selected);
-        out.putString("date", date);
-        out.putString("name", name);
-        out.putString("week", week);
-        out.putString("swim", swim);
         out.putBundle("action", actionState);
+        out.putBundle("settings", settingsState);
         return out;
     }
 
     private void capture() {
         if (nameInput != null) {
-            name = value(nameInput);
-            week = value(weekInput);
-            swim = value(swimInput);
+            settingsState.putString("name", value(nameInput));
+            settingsState.putString("week", value(weekInput));
+            settingsState.putString("swim", value(swimInput));
         }
         if (actionInputs != null) {
             actionState = new Bundle();
@@ -98,18 +96,15 @@ final class PlanEditorUi {
         a.timerView = null;
         JSONObject x = draft.session();
         boolean isNew = x.optInt("id") < 0;
-        boolean inAction = selected != PLAN;
-        LinearLayout top = a.horizontal();
+        boolean inSettings = selected == SETTINGS;
+        boolean inAction = selected >= -1;
+        String title = inSettings ? "计划设置" : inAction ? (selected < 0 ? "添加动作" : "编辑动作")
+            : isNew ? "新建训练计划" : "编辑训练计划";
+        LinearLayout top = a.titleRow(title, 20);
         top.setBackgroundColor(SURFACE);
-        top.setPadding(a.dp(12), a.dp(8), a.dp(16), a.dp(8));
-        TextView back = a.action("‹ 返回", false, this::back);
-        back.setContentDescription("返回");
-        a.add(top, back);
-        TextView title = a.text(inAction ? (selected < 0 ? "添加动作" : "编辑动作")
-            : isNew ? "新建训练计划" : "编辑训练计划", 20, INK, true);
-        title.setPadding(a.dp(14), 0, 0, 0);
-        title.setAccessibilityHeading(true);
-        top.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
+        top.setPadding(a.dp(8), a.dp(4), a.dp(12), a.dp(4));
+        top.addView(a.iconButton(R.drawable.ic_back, "返回", GREEN, Color.TRANSPARENT, v -> back()), 0);
+        if (selected == PLAN) a.add(top, a.iconButton(R.drawable.ic_settings, "计划设置", this::openSettings));
         a.add(a.shell, top);
         divider(a.shell);
 
@@ -121,7 +116,8 @@ final class PlanEditorUi {
         a.content.setPadding(a.dp(20), a.dp(16), a.dp(20), a.dp(16));
         a.scroll.addView(a.content);
         a.shell.addView(a.scroll, new LinearLayout.LayoutParams(-1, 0, 1));
-        if (inAction) renderAction();
+        if (inSettings) renderSettings();
+        else if (inAction) renderAction();
         else renderPlan(x, isNew);
 
         divider(a.shell);
@@ -132,7 +128,8 @@ final class PlanEditorUi {
         error.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         error.setVisibility(View.GONE);
         a.add(footer, error);
-        a.add(footer, a.action(inAction ? (selected < 0 ? "加入动作列表" : "应用动作修改") : "保存计划",
+        if (inSettings) a.add(footer, a.action("完成设置", true, this::applySettings));
+        else a.add(footer, a.action(inAction ? (selected < 0 ? "加入动作列表" : "应用动作修改") : "保存计划",
             true, inAction ? this::applyAction : this::savePlan));
         a.add(a.shell, footer);
         a.content.requestFocus();
@@ -144,49 +141,45 @@ final class PlanEditorUi {
 
     private void renderPlan(JSONObject x, boolean isNew) {
         boolean archived = x.optBoolean("archived");
+        LinearLayout summary = a.horizontal();
+        LinearLayout details = a.vertical();
+        String name = s(x, "name");
+        TextView planName = a.text(name.isEmpty() ? "未命名训练" : name, 17, INK, true);
+        planName.setMaxLines(2);
+        planName.setEllipsize(TextUtils.TruncateAt.END);
+        a.add(details, planName);
+        a.gap(details, 4);
+        int week = x.optInt("week");
+        String schedule = a.dateLabel(s(x, "date")) + (week == 0 ? "  ·  未分周" : "  ·  第 " + week + " 周");
+        String swim = s(x.optJSONObject("swim"), "planned");
+        if (!swim.isEmpty()) schedule += "  ·  计划游泳 " + swim + " 分钟";
+        a.add(details, a.text(schedule, 13, MUTED, false));
         if (archived) {
-            LinearLayout notice = a.card(a.content);
-            a.add(notice, a.text("此训练已移出计划，历史记录仍保留。", 14, MUTED, false));
+            a.gap(details, 5);
+            a.add(details, a.text("已移出计划", 13, MUTED, false));
         }
+        summary.addView(details, new LinearLayout.LayoutParams(0, -2, 1));
+        if (!isNew) {
+            a.add(summary, a.iconButton(R.drawable.ic_more, "计划管理", MUTED, Color.TRANSPARENT,
+                v -> showPlanManagement(v, archived)));
+        }
+        a.add(a.card(a.content), summary);
 
-        LinearLayout details = a.card(a.content);
-        heading(details, "训练安排");
-        nameInput = a.input(details, "训练名称", name, "输入训练名称", false);
-        a.label(details, "训练日期");
-        a.add(details, a.action(dateLabel(), false, this::pickDate));
-        a.gap(details, 13);
-        LinearLayout inputs = a.horizontal();
-        inputs.setGravity(android.view.Gravity.TOP);
-        LinearLayout weekField = column(inputs, false), swimField = column(inputs, true);
-        weekInput = a.input(weekField, "计划周次", week, "0 为未分周", true);
-        integer(weekInput);
-        swimInput = a.input(swimField, "计划游泳（分钟）", swim, "可留空", true);
-        a.add(details, inputs);
-
-        LinearLayout header = a.horizontal();
-        TextView listTitle = a.text("训练动作", 20, INK, true);
-        listTitle.setAccessibilityHeading(true);
-        LinearLayout listLabel = a.vertical();
-        a.add(listLabel, listTitle);
-        int activeCount = PlanOps.activeCount(x);
-        a.add(listLabel, a.text(activeCount > 1 ? "拖动 ☰ 调整顺序" : activeCount + " 个动作", 13, MUTED, false));
-        header.addView(listLabel, new LinearLayout.LayoutParams(0, -2, 1));
-        a.add(header, a.action("＋ 添加动作", false, () -> openAction(-1)));
-        a.add(a.content, header);
-        a.gap(a.content, 10);
+        a.add(a.content, a.titleRow("训练动作", 20,
+            a.iconButton(R.drawable.ic_add, "添加动作", () -> openAction(-1))));
+        a.gap(a.content, 8);
         JSONArray exercises = x.optJSONArray("exercises");
+        int activeCount = PlanOps.activeCount(x);
         ExerciseReorder reorder = activeCount > 1
             ? new ExerciseReorder(a, (from, to) -> mutate(() -> draft.moveExercise(from, to))) : null;
-        int count = 0;
         for (int i = 0; i < exercises.length(); i++) {
             JSONObject e = exercises.optJSONObject(i);
-            if (!e.optBoolean("archived")) actionCard(e, i, ++count, reorder);
+            if (!e.optBoolean("archived")) actionCard(e, i, reorder);
         }
-        if (count == 0) {
+        if (activeCount == 0) {
             LinearLayout empty = a.card(a.content);
-            a.add(empty, a.text("还没有训练动作。", 14, MUTED, false));
+            a.add(empty, a.text("暂无训练动作", 14, MUTED, false));
         }
-        a.gap(a.content, 12);
         boolean historical = false;
         for (int i = 0; i < exercises.length(); i++) {
             JSONObject e = exercises.optJSONObject(i);
@@ -196,51 +189,105 @@ final class PlanEditorUi {
                 historical = true;
             }
             final int index = i;
-            LinearLayout row = a.card(a.content);
-            a.add(row, a.text(s(e, "name"), 15, INK, true));
-            a.gap(row, 6);
-            a.add(row, a.text("已保留填写过的组记录", 12, MUTED, false));
-            a.gap(row, 8);
-            a.add(row, a.action("恢复到计划", false, () -> mutate(() -> draft.restoreExercise(index))));
-        }
-        if (!isNew) {
-            LinearLayout options = a.card(a.content);
-            heading(options, "计划管理");
-            a.add(options, a.action("复制训练到其他日期", false, this::copy));
-            a.gap(options, 8);
-            a.add(options, button(archived ? "恢复到训练计划" : "从计划移除",
-                archived ? GREEN : REMOVE, () -> mutate(() -> draft.setArchived(!archived))));
-            if (archived) {
-                a.gap(options, 6);
-                a.add(options, a.text("恢复显示后，点击「保存计划」生效。", 12, MUTED, false));
-            } else {
-                a.gap(options, 6);
-                a.add(options, a.text("移出计划后，已填写的训练记录仍可查看。", 12, MUTED, false));
-            }
+            String exerciseName = s(e, "name");
+            a.add(a.card(a.content), a.titleRow(exerciseName, 15,
+                a.iconButton(R.drawable.ic_restore, "恢复 " + exerciseName + " 到计划",
+                    () -> mutate(() -> draft.restoreExercise(index)))));
         }
     }
 
-    private String dateLabel() {
-        return a.dateLabel(date) + "  ▾";
+    private void showPlanManagement(View anchor, boolean archived) {
+        PopupMenu menu = new PopupMenu(a, anchor, Gravity.END);
+        menu.getMenu().add("复制到其他日期").setOnMenuItemClickListener(item -> {
+            copy();
+            return true;
+        });
+        menu.getMenu().add(archived ? "恢复到计划" : "移出计划").setOnMenuItemClickListener(item -> {
+            mutate(() -> draft.setArchived(!archived));
+            return true;
+        });
+        menu.show();
     }
 
-    private void pickDate() {
+    private Bundle currentSettings() {
+        JSONObject x = draft.session();
+        Bundle values = new Bundle();
+        values.putString("date", s(x, "date"));
+        values.putString("name", s(x, "name"));
+        values.putString("week", s(x, "week"));
+        values.putString("swim", s(x.optJSONObject("swim"), "planned"));
+        return values;
+    }
+
+    private void openSettings() {
+        planScroll = a.scroll.getScrollY();
+        selected = SETTINGS;
+        settingsState = currentSettings();
+        a.build();
+    }
+
+    private void renderSettings() {
+        if (settingsState == null) settingsState = currentSettings();
+        LinearLayout details = a.card(a.content);
+        nameInput = a.input(details, "训练名称", settingsState.getString("name"), "输入训练名称", false);
+        a.label(details, "训练日期");
+        TextView dateButton = a.action("", false, () -> {});
+        dateButton.setCompoundDrawablesRelativeWithIntrinsicBounds(null, null, a.icon(R.drawable.ic_calendar, GREEN), null);
+        updateDateButton(dateButton);
+        dateButton.setOnClickListener(v -> pickDate(dateButton));
+        a.add(details, dateButton);
+        a.gap(details, 13);
+        LinearLayout inputs = a.horizontal();
+        inputs.setGravity(Gravity.TOP);
+        weekInput = a.input(column(inputs, false), "计划周次", settingsState.getString("week"), "0 为未分周", true);
+        integer(weekInput);
+        swimInput = a.input(column(inputs, true), "计划游泳（分钟）", settingsState.getString("swim"), "可留空", true);
+        a.add(details, inputs);
+        a.add(a.content, a.text("返回后点「保存计划」生效。", 13, MUTED, false));
+    }
+
+    private void updateDateButton(TextView button) {
+        String date = a.dateLabel(settingsState.getString("date"));
+        button.setText(date);
+        button.setContentDescription("训练日期：" + date);
+    }
+
+    private void pickDate(TextView button) {
         hideKeyboard();
-        a.pickDate(LocalDate.parse(date), d -> {
-            date = d.toString();
-            refreshPlan();
+        a.pickDate(LocalDate.parse(settingsState.getString("date")), d -> {
+            settingsState.putString("date", d.toString());
+            updateDateButton(button);
         });
     }
 
-    private void actionCard(JSONObject e, int index, int number, ExerciseReorder reorder) {
+    private void applySettings() {
+        capture();
+        try {
+            draft.details(settingsState.getString("date"), settingsState.getString("name"),
+                settingsState.getString("week"), settingsState.getString("swim"));
+            returnToPlan();
+        } catch (Exception ex) {
+            showError(ex.getMessage());
+        }
+    }
+
+    private boolean settingsChanged() {
+        if (settingsState == null) return false;
+        Bundle original = currentSettings();
+        for (String key : SETTING_KEYS) {
+            if (!settingsState.getString(key).equals(original.getString(key))) return true;
+        }
+        return false;
+    }
+
+    private void actionCard(JSONObject e, int index, ExerciseReorder reorder) {
         LinearLayout card = a.card(a.content);
-        LinearLayout row = a.horizontal();
-        if (reorder != null) reorder.addHandle(row, card, index, s(e, "name"));
-        TextView name = a.text(String.format(java.util.Locale.ROOT, "%02d  %s", number, s(e, "name")), 17, INK, true);
-        row.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
-        TextView edit = a.action("编辑", false, () -> openAction(index));
-        edit.setContentDescription("编辑 " + s(e, "name"));
-        a.add(row, edit);
+        String name = s(e, "name");
+        LinearLayout row = a.titleRow(name, 17,
+            a.iconButton(R.drawable.ic_edit, "编辑 " + name, GREEN, Color.TRANSPARENT, v -> openAction(index)),
+            a.iconButton(R.drawable.ic_trash, "移除 " + name, REMOVE, Color.TRANSPARENT,
+                v -> mutate(() -> draft.removeExercise(index))));
+        if (reorder != null) reorder.addHandle(row, card, index, name);
         a.add(card, row);
         a.gap(card, 6);
         String targets = s(e, "sets") + " 组  ×  " + s(e, "low") + "–" + s(e, "high") + " " + s(e, "unit")
@@ -249,14 +296,8 @@ final class PlanEditorUi {
         a.add(card, a.text(targets, 13, MUTED, false));
         if (!s(e, "load").isEmpty()) {
             a.gap(card, 5);
-            a.add(card, a.text("建议重量：" + s(e, "load"), 12, MUTED, false));
+            a.add(card, a.text("建议重量 " + s(e, "load"), 12, MUTED, false));
         }
-        a.gap(card, 8);
-        LinearLayout controls = a.horizontal();
-        TextView remove = button("移除", REMOVE, () -> mutate(() -> draft.removeExercise(index)));
-        remove.setContentDescription("移除 " + s(e, "name"));
-        a.add(controls, remove);
-        a.add(card, controls);
     }
 
     void openAction(int index) {
@@ -282,7 +323,6 @@ final class PlanEditorUi {
         Bundle v = actionState == null ? originalAction() : actionState;
         actionInputs = new EditText[KEYS.length];
         LinearLayout basic = a.card(a.content);
-        heading(basic, "动作与目标");
         actionInputs[0] = a.input(basic, "动作名称", v.getString("name"), "输入你要练的动作", false);
         LinearLayout row = a.horizontal();
         row.setGravity(android.view.Gravity.TOP);
@@ -305,7 +345,6 @@ final class PlanEditorUi {
         a.add(basic, row);
 
         LinearLayout extra = a.card(a.content);
-        heading(extra, "强度、休息与备注");
         LinearLayout targets = a.horizontal();
         targets.setGravity(android.view.Gravity.TOP);
         actionInputs[4] = a.input(column(targets,false),"目标 RIR",v.getString("rir"),"可留空",true);
@@ -317,12 +356,11 @@ final class PlanEditorUi {
 
         if (draft.session().optInt("id") >= 0 && !draft.session().optBoolean("archived")) {
             syncInput = new CheckBox(a);
-            syncInput.setText("同时应用到此后同名训练日");
+            syncInput.setText("同步到后续同名训练");
             syncInput.setTextSize(14);
             syncInput.setTextColor(INK);
             syncInput.setChecked(v.getBoolean("sync"));
             a.add(a.content, syncInput);
-            a.add(a.content,a.text("只同步这个动作，实际训练记录会保留。",12,MUTED,false));
         }
     }
 
@@ -337,7 +375,7 @@ final class PlanEditorUi {
             }
             fields.put("unit", UNITS[actionState.getInt("unit")]);
             draft.applyExercise(selected, fields, actionState.getBoolean("sync"));
-            closeAction();
+            returnToPlan();
         } catch (NumberFormatException ex) {
             showError("请填写组数、每组范围和休息秒数。");
         } catch (Exception ex) {
@@ -348,11 +386,19 @@ final class PlanEditorUi {
     void back() {
         capture();
         hideKeyboard();
-        if (selected != PLAN) {
-            if (actionChanged()) confirmDiscard("放弃此动作的修改？", this::closeAction);
-            else closeAction();
-        } else if (changed()) confirmDiscard("放弃本次计划修改？", () -> a.closePlanEditor(-1, false));
+        if (selected == SETTINGS) {
+            if (settingsChanged()) confirmDiscard("放弃本次设置修改？", this::leaveSettings);
+            else leaveSettings();
+        } else if (selected != PLAN) {
+            if (actionChanged()) confirmDiscard("放弃此动作的修改？", this::returnToPlan);
+            else returnToPlan();
+        } else if (draft.dirty()) confirmDiscard("放弃本次计划修改？", () -> a.closePlanEditor(-1, false));
         else a.closePlanEditor(-1, false);
+    }
+
+    private void leaveSettings() {
+        if (draft.session().optInt("id") < 0 && !draft.dirty()) a.closePlanEditor(-1, false);
+        else returnToPlan();
     }
 
     private boolean actionChanged() {
@@ -363,18 +409,13 @@ final class PlanEditorUi {
             || actionState.getBoolean("sync") != original.getBoolean("sync");
     }
 
-    private void closeAction() {
+    private void returnToPlan() {
         hideKeyboard();
         selected = PLAN;
         actionState = null;
+        settingsState = null;
         restoreScroll = planScroll;
         a.build();
-    }
-
-    private boolean changed() {
-        JSONObject x = draft.session();
-        return draft.dirty() || !date.equals(s(x,"date")) || !name.equals(s(x,"name"))
-            || !week.equals(s(x,"week")) || !swim.equals(s(x.optJSONObject("swim"),"planned"));
     }
 
     private void confirmDiscard(String title, Runnable discard) {
@@ -385,7 +426,7 @@ final class PlanEditorUi {
     private void copy() {
         capture();
         hideKeyboard();
-        if (changed()) {
+        if (draft.dirty()) {
             showError("请先保存修改，再复制训练。");
             return;
         }
@@ -395,10 +436,14 @@ final class PlanEditorUi {
     private void savePlan() {
         capture();
         hideKeyboard();
+        if (s(draft.session(), "name").isEmpty()) {
+            openSettings();
+            showError("请填写训练名称。");
+            return;
+        }
         try {
             boolean isNew = draft.session().optInt("id") < 0;
             PlanEditorDraft proposal = new PlanEditorDraft(draft.state());
-            proposal.details(date, name, week, swim);
             int nextId = a.planner.nextId();
             List<JSONObject> targets = proposal.prepare(a.store.list("session"),nextId);
             Runnable save = () -> {
@@ -452,13 +497,6 @@ final class PlanEditorUi {
         heading.setAccessibilityHeading(true);
         a.add(host,heading);
         a.gap(host,12);
-    }
-
-    private TextView button(String title,int color,Runnable click) {
-        TextView b = a.action(title,false,click);
-        b.setTextColor(color);
-        if (color == REMOVE) b.setBackground(a.bg(0xffffefef,14));
-        return b;
     }
 
     private LinearLayout column(LinearLayout row,boolean right) {

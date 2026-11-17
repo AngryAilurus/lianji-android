@@ -67,12 +67,12 @@ final class PlanEditorDraft {
     }
 
     void details(String date, String name, String week, String swim) throws Exception {
-        String rawWeek = week.trim();
-        Object parsedWeek;
-        try { parsedWeek = Integer.parseInt(rawWeek); }
-        catch (NumberFormatException ex) { parsedWeek = rawWeek; }
-        draft.put("date", date.trim()).put("name", name.trim()).put("week", parsedWeek);
-        draft.getJSONObject("swim").put("planned", swim.trim());
+        String plannedDate = date.trim();
+        String plannedName = name.trim();
+        String plannedSwim = swim.trim();
+        int plannedWeek = validateDetails(plannedDate, plannedName, week.trim(), plannedSwim);
+        draft.put("date", plannedDate).put("name", plannedName).put("week", plannedWeek);
+        draft.getJSONObject("swim").put("planned", plannedSwim);
     }
 
     void setArchived(boolean archived) throws JSONException { draft.put("archived", archived); }
@@ -250,15 +250,19 @@ final class PlanEditorDraft {
     }
 
     private static void validateDetails(JSONObject current) throws Exception {
-        try { LocalDate.parse(s(current, "date")); }
+        int week = validateDetails(s(current, "date"), s(current, "name"), s(current, "week"),
+            s(current.optJSONObject("swim"), "planned"));
+        current.put("week", week);
+    }
+
+    private static int validateDetails(String date, String name, String weekValue, String minutes) throws Exception {
+        try { LocalDate.parse(date); }
         catch (RuntimeException ex) { throw new Exception("请选择有效的训练日期"); }
-        if (s(current, "name").isEmpty()) throw new Exception("请填写训练名称");
+        if (name.isEmpty()) throw new Exception("请填写训练名称");
         int week;
-        try { week = Integer.parseInt(s(current, "week")); }
+        try { week = Integer.parseInt(weekValue); }
         catch (NumberFormatException ex) { throw new Exception("周次请输入0–52"); }
         if (week < 0 || week > 52) throw new Exception("周次请输入0–52");
-        current.put("week", week);
-        String minutes = s(current.optJSONObject("swim"), "planned");
         if (!minutes.isEmpty()) {
             double value;
             try { value = Double.parseDouble(minutes); }
@@ -267,6 +271,7 @@ final class PlanEditorDraft {
                 throw new Exception("计划游泳时间请输入0–600分钟");
             }
         }
+        return week;
     }
 
     private JSONObject activeExercise(int index) throws Exception {

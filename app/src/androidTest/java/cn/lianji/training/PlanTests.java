@@ -164,11 +164,11 @@ final class PlanTests {
         check(rejected && draft.dirty() && saved.toString().equals(before),
                 "a duplicate date and name rejects the whole save without discarding or partially saving the draft");
 
-        draft.details("2032-06-31", "合成验证训练", "2", "");
+        String beforeInvalid = draft.state();
         rejected = false;
-        try { new PlanEditorDraft(draft.state()).prepare(saved, 8001); } catch (Exception expected) { rejected = true; }
-        check(rejected && saved.toString().equals(before),
-                "an invalid calendar date cannot be saved after restoring the draft");
+        try { draft.details("2032-06-31", "合成无效修改", "3", "8"); } catch (Exception expected) { rejected = true; }
+        check(rejected && draft.state().equals(beforeInvalid) && saved.toString().equals(before),
+                "rejecting invalid settings preserves both the earlier draft and the saved plan");
 
         draft.details("2032-06-05", "合成验证训练", "2", "");
         check(draft.prepare(saved, 8001).size() == 2 && saved.toString().equals(before),

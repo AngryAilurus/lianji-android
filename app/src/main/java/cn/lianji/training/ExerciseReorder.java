@@ -3,14 +3,13 @@ package cn.lianji.training;
 import android.content.ClipData;
 import android.graphics.drawable.ColorDrawable;
 import android.view.DragEvent;
-import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.accessibility.AccessibilityNodeInfo;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
-import android.widget.TextView;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -44,12 +43,13 @@ final class ExerciseReorder {
     void addHandle(LinearLayout header, View card, int index, String name) {
         Row row = new Row(card, index);
         rows.add(row);
-        TextView handle = activity.text("☰", 23, MainActivity.GREEN, true);
-        handle.setGravity(Gravity.CENTER);
+        ImageView handle = new ImageView(activity);
+        handle.setImageDrawable(activity.icon(R.drawable.ic_drag, MainActivity.GREEN));
+        handle.setScaleType(ImageView.ScaleType.CENTER);
         handle.setContentDescription("调整 " + name + " 的顺序");
         handle.setTooltipText("拖动调整顺序");
         handle.setFocusable(true);
-        header.addView(handle, new LinearLayout.LayoutParams(activity.dp(48), activity.dp(48)));
+        header.addView(handle, 0, new LinearLayout.LayoutParams(activity.dp(48), activity.dp(48)));
 
         int slop = ViewConfiguration.get(activity).getScaledTouchSlop();
         handle.setOnTouchListener(new View.OnTouchListener() {
