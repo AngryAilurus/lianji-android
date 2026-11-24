@@ -308,8 +308,8 @@ final class PlanTests {
             for (JSONObject day : template.sessions) {
                 JSONArray templateExercises = day.getJSONArray("exercises");
                 for (int i = 0; i < templateExercises.length(); i++) {
-                    JSONObject exercise = templateExercises.getJSONObject(i);
-                    check(Store.str(exercise, "load").isEmpty() && Store.str(exercise, "note").isEmpty(),
+                    JSONObject templateExercise = templateExercises.getJSONObject(i);
+                    check(Store.str(templateExercise, "load").isEmpty() && Store.str(templateExercise, "note").isEmpty(),
                         "blank template has no suggested weight or exercise instructions");
                 }
             }
