@@ -107,11 +107,17 @@ public final class PlanXlsx {
         List<List<Object>> rows=new ArrayList<>();int maxSets=3;for(JSONObject session:sessions){JSONArray es=session.getJSONArray("exercises");for(int i=0;i<es.length();i++)if(!es.getJSONObject(i).optBoolean("archived"))maxSets=Math.max(maxSets,es.getJSONObject(i).getJSONArray("actual").length());}
         List<Object> headers=new ArrayList<>(Arrays.asList("日期","训练","动作","组数","次数下限","次数上限","单位","目标RIR","休息秒","重量建议","备注","周","游泳分钟","动作编号"));
         for(int i=1;i<=maxSets;i++)headers.addAll(Arrays.asList(i+"组kg",i+"组次/秒/米",i+"组RIR"));rows.add(headers);
-        if(template){rows.add(new ArrayList<>(Arrays.asList(LocalDate.now().plusDays(1).toString(),"上肢A","杠铃卧推",3,8,10,"次",3,150,"从轻重量试做","每行一个动作",1,15,"")));rows.add(new ArrayList<>(Arrays.asList(LocalDate.now().plusDays(1).toString(),"上肢A","高位下拉",3,10,12,"次",3,120,"按实际余力选择","",1,15,"")));}
+        if(template){rows.add(new ArrayList<>(Arrays.asList(LocalDate.now().plusDays(1).toString(),"上肢A","杠铃卧推",3,8,10,"次",3,150,"","",1,15,"")));rows.add(new ArrayList<>(Arrays.asList(LocalDate.now().plusDays(1).toString(),"上肢A","高位下拉",3,10,12,"次",3,120,"","",1,15,"")));}
         else for(JSONObject session:sessions){if(session.optBoolean("archived"))continue;JSONArray es=session.getJSONArray("exercises");for(int i=0;i<es.length();i++){JSONObject e=es.getJSONObject(i);if(e.optBoolean("archived"))continue;
             List<Object> row=new ArrayList<>(Arrays.asList(Store.str(session,"date"),Store.str(session,"name"),Store.str(e,"name"),e.optInt("sets"),e.optInt("low"),e.optInt("high"),Store.str(e,"unit"),Store.str(e,"rir"),e.optInt("rest"),Store.str(e,"load"),Store.str(e,"note"),session.optInt("week"),Store.str(session.optJSONObject("swim"),"planned"),Store.str(e,"id")));
             JSONArray actual=e.getJSONArray("actual");for(int j=0;j<maxSets;j++){JSONObject set=actual.optJSONObject(j);row.add(Store.str(set,"weight"));row.add(Store.str(set,"quantity"));row.add(Store.str(set,"rir"));}rows.add(row);
         }}
+        if (template) {
+            for (List<Object> row : rows) {
+                row.remove(10);
+                row.remove(9);
+            }
+        }
         ByteArrayOutputStream out=new ByteArrayOutputStream();try(ZipOutputStream z=new ZipOutputStream(out)){
             zip(z,"[Content_Types].xml","<?xml version=\"1.0\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/><Override PartName=\"/xl/worksheets/sheet1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/></Types>");
             zip(z,"_rels/.rels","<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\"/></Relationships>");

@@ -30,7 +30,7 @@ final class PlanEditorUi {
     private static final int SETTINGS = -3;
     private static final int REMOVE = 0xffa53333;
     private static final String[] UNITS = {"次", "秒", "米"};
-    private static final String[] KEYS = {"name", "sets", "low", "high", "rir", "rest", "load", "note"};
+    private static final String[] KEYS = {"name", "sets", "low", "high", "rir", "rest"};
     private static final String[] SETTING_KEYS = {"date", "name", "week", "swim"};
 
     final MainActivity a;
@@ -294,10 +294,6 @@ final class PlanEditorUi {
             + "  ·  休息 " + s(e, "rest") + " 秒";
         if (!s(e, "rir").isEmpty()) targets += "  ·  RIR " + s(e, "rir");
         a.add(card, a.text(targets, 13, MUTED, false));
-        if (!s(e, "load").isEmpty()) {
-            a.gap(card, 5);
-            a.add(card, a.text("建议重量 " + s(e, "load"), 12, MUTED, false));
-        }
     }
 
     void openAction(int index) {
@@ -311,7 +307,7 @@ final class PlanEditorUi {
 
     private Bundle originalAction() {
         JSONObject e = selected < 0 ? null : draft.session().optJSONArray("exercises").optJSONObject(selected);
-        String[] defaults = {"", "2", "8", "12", "", "90", "", ""};
+        String[] defaults = {"", "2", "8", "12", "", "90"};
         Bundle v = new Bundle();
         for (int i = 0; i < KEYS.length; i++) v.putString(KEYS[i], e == null ? defaults[i] : s(e, KEYS[i]));
         v.putInt("unit", e == null ? 0 : Math.max(0, Arrays.asList(UNITS).indexOf(s(e, "unit"))));
@@ -350,8 +346,6 @@ final class PlanEditorUi {
         actionInputs[4] = a.input(column(targets,false),"目标 RIR",v.getString("rir"),"可留空",true);
         actionInputs[5] = a.input(column(targets,true),"休息（秒）",v.getString("rest"),"0–1800",true);
         a.add(extra,targets);
-        actionInputs[6] = a.input(extra, "建议重量", v.getString("load"), "可留空", false);
-        actionInputs[7] = a.input(extra, "动作备注", v.getString("note"), "可留空", false);
         for (int i = 1; i <= 5; i++) integer(actionInputs[i]);
 
         if (draft.session().optInt("id") >= 0 && !draft.session().optBoolean("archived")) {
@@ -374,6 +368,8 @@ final class PlanEditorUi {
                 else fields.put(key,field);
             }
             fields.put("unit", UNITS[actionState.getInt("unit")]);
+            JSONObject previous = selected < 0 ? null : draft.session().getJSONArray("exercises").getJSONObject(selected);
+            fields.put("load", s(previous, "load")).put("note", s(previous, "note"));
             draft.applyExercise(selected, fields, actionState.getBoolean("sync"));
             returnToPlan();
         } catch (NumberFormatException ex) {

@@ -516,10 +516,6 @@ public class MainActivity extends Activity {
         String target = e.optInt("low") + "–" + e.optInt("high") + unit;
         if (!s(e, "rir").isEmpty()) target += " · RIR " + s(e, "rir");
         add(card, text(target + " · 休息 " + e.optInt("rest") + " 秒", 12, MUTED, false));
-        if (!s(e, "note").isEmpty()) {
-            gap(card, 6);
-            add(card, text(s(e, "note"), 12, MUTED, false));
-        }
         gap(card, 13);
         LinearLayout columns = horizontal();
         String[] labels = {"组", "重量 kg", unit.equals("米") ? "距离" : "数量 " + unit, "RIR", ""};
@@ -677,10 +673,6 @@ public class MainActivity extends Activity {
         EditText rf=stepper(b,"RIR（还能做几次，可留空）",rir,s(e,"rir").isEmpty()?"此动作可不填":"目标 "+s(e,"rir"),1);
         EditText restField=finishing?null:input(b,"本组完成后休息（秒）",String.valueOf(set.optInt("restSeconds",e.optInt("rest",90))),"0–1800，0表示不休息",true);if(restField!=null)restField.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
         final boolean[] withRest={false};
-        if (!s(e, "load").isEmpty()) {
-            add(b, text("建议重量 " + s(e, "load"), 12, MUTED, false));
-            gap(b, 8);
-        }
         TextView message = text("", 12, 0xffb13a27, false);
         message.setVisibility(View.GONE);
         message.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);

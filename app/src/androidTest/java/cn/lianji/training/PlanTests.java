@@ -305,6 +305,14 @@ final class PlanTests {
             PlanOps.ImportBatch rt=PlanOps.prepare(store,roundtrip.sessions,true);check(rt.added==0,"roundtrip does not duplicate sessions");check(rt.conflicts==0,"roundtrip preserves updated local records");
             PlanXlsx.Table template=read(ctx,PlanXlsx.write(Collections.emptyList(),true));
             check(template.errors.isEmpty()&&template.rows==2&&template.sessions.size()==1,"template imports as one session and two exercises");
+            for (JSONObject day : template.sessions) {
+                JSONArray templateExercises = day.getJSONArray("exercises");
+                for (int i = 0; i < templateExercises.length(); i++) {
+                    JSONObject exercise = templateExercises.getJSONObject(i);
+                    check(Store.str(exercise, "load").isEmpty() && Store.str(exercise, "note").isEmpty(),
+                        "blank template has no suggested weight or exercise instructions");
+                }
+            }
             String prior=store.get("session","101").toString();boolean rejected=false;JSONObject bad=Store.cloneJson(actual.sessions.get(0));
             bad.getJSONArray("exercises").getJSONObject(0).put("sets",0);try{PlanOps.prepare(store,Collections.singletonList(bad),true);}catch(Exception expected){rejected=true;}
             check(rejected,"invalid set count rejected");check(store.get("session","101").toString().equals(prior),"invalid preview never writes local data");
